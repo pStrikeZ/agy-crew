@@ -16,7 +16,8 @@ import { accountDir, accountHome, accountSettingsPath, loadPool, poolExists, poo
   updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
 import { readToken } from './pool/token.mjs';
-import { refreshQuotas, summarizeSnapshot } from './pool/quota.mjs';
+import { refreshQuotas } from './pool/quota.mjs';
+import { formatAgo, renderCooldowns, renderQuotaTable, renderTable } from './pool/format.mjs';
 import { replaceFile } from './state-lock.mjs';
 
 const out = (text) => process.stdout.write(text + '\n');
@@ -47,6 +48,9 @@ function accountState(pool, account, now) {
   return n ? `busy ${n}` : 'ready';
 }
 
+/** Text-mode state: the per-family cooldown detail lives in the COOLDOWNS section. */
+const stateLabel = (state) => (state.startsWith('cooling ') ? 'cooling' : state);
+
 function cmdList(opts) {
   const pool = currentPool();
   const now = Date.now();
@@ -56,12 +60,14 @@ function cmdList(opts) {
     cooldowns: Object.entries(pool.cooldowns).filter(([k]) => k.startsWith(`${a.name}|`)).map(([k, c]) => ({ family: k.split('|')[1], ...c })),
   }));
   if (opts.json) return printJson({ accounts: rows, live: { description: 'your own agy login; never pooled' } });
-  if (!rows.length) out(`No pool accounts. Add one with \`accounts login <name>\`.`);
-  for (const r of rows) {
-    out(`${r.name}  <${r.email || 'unknown'}>  ${r.state}  last used ${r.last_used_at || 'never'}`);
-    out(`    ${summarizeSnapshot(r.quota)}`);
-  }
-  out('live (your own agy login; never pooled)');
+  if (!rows.length) out('No pool accounts. Add one with `accounts login <name>`.');
+  const table = rows.map((r) => [r.name, r.email || 'unknown', stateLabel(r.state), formatAgo(r.last_used_at, now)]);
+  table.push({ lead: ['live'], text: 'your own agy login, never pooled' });
+  const lines = renderTable(['ACCOUNT', 'EMAIL', 'STATE', 'LAST USED'], table);
+  if (rows.length) lines.push('', ...renderQuotaTable(rows.map((r) => ({ name: r.name, snapshot: r.quota })), now));
+  const cooling = rows.flatMap((r) => r.cooldowns.filter((c) => Date.parse(c.retry_at) > now).map((c) => ({ name: r.name, ...c })));
+  if (cooling.length) lines.push('', ...renderCooldowns(cooling, now));
+  out(lines.join('\n'));
 }
 
 // ---------------------------------------------------------------------------
@@ -267,11 +273,11 @@ async function cmdQuota(opts, deps) {
     cooldowns: Object.entries(latest.cooldowns).filter(([k, c]) => k.startsWith(`${name}|`) && Date.parse(c.retry_at) > now)
       .map(([k, c]) => ({ family: k.split('|')[1], retry_at: c.retry_at })) }));
   if (opts.json) return printJson({ accounts: rows });
-  if (!rows.length) out('No pool accounts. Add one with `accounts login <name>`.');
-  for (const r of rows) {
-    out(`${r.name}: ${summarizeSnapshot(r.snapshot)}${r.snapshot?.refreshed_at ? ` (as of ${r.snapshot.refreshed_at})` : ''}`);
-    for (const c of r.cooldowns) out(`    cooling ${c.family} until ${c.retry_at}`);
-  }
+  if (!rows.length) return out('No pool accounts. Add one with `accounts login <name>`.');
+  const lines = renderQuotaTable(rows.map((r) => ({ name: r.name, snapshot: r.snapshot })), now);
+  const cooling = rows.flatMap((r) => r.cooldowns.map((c) => ({ name: r.name, ...c })));
+  if (cooling.length) lines.push('', ...renderCooldowns(cooling, now));
+  out(lines.join('\n'));
 }
 
 /** settings.json of every pool account, for `setup --apply`. */

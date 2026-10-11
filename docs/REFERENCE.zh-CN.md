@@ -254,10 +254,10 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 | 命令 | 作用 |
 | --- | --- |
-| `accounts list [--json]` | 显示名称、邮箱、状态（`ready`、`busy n`、`cooling <family> until <time>`、`needs login`、`disabled`）、最近使用时间和缓存的配额摘要，并附一行 live：`live (your own agy login; never pooled)` |
+| `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 输出不变 |
 | `accounts login <name>` | 交互式登录：添加新账号，或为已有账号重新登录。见[登录](#登录) |
 | `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
-| `accounts quota [<name>...] [--refresh] [--json]` | 显示缓存的配额快照和冷却状态。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
+| `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
 | `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
 | `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |

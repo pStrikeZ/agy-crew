@@ -25,8 +25,8 @@ test('login enrolls an account, lists it, and the staging area is cleaned up', (
   assert.match(listed.live.description, /never pooled/);
   const text = run(sb, ['accounts', 'list']);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /work\s+<work@example.com>\s+ready/);
-  assert.match(text.stdout, /live \(your own agy login; never pooled\)/);
+  assert.match(text.stdout, /work +work@example\.com +ready/);
+  assert.match(text.stdout, /live +your own agy login, never pooled/);
   assert.equal(fs.existsSync(path.join(sb.repo, '.agy-crew')), false, 'accounts never touches the repo state dir');
 });
 

@@ -63,9 +63,9 @@ test('quota --refresh stores snapshots, clears recovered cooldowns, and never pr
 
     const cached = run(sb, ['accounts', 'quota']);
     assert.equal(cached.code, 0);
-    assert.match(cached.stdout, /gemini 5h 25% weekly 50%/);
+    assert.match(cached.stdout, /gemini +25%  resets in .* +50%  resets in /);
     const listed = run(sb, ['accounts', 'list']);
-    assert.match(listed.stdout, /quota: gemini 5h 25% weekly 50% \| other 5h 90%/);
+    assert.match(listed.stdout, /other +90%  resets in /);
   } finally { await server.close(); }
 });
 

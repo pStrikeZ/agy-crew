@@ -131,12 +131,3 @@ export async function refreshQuotas(names, deps) {
   });
   return Object.fromEntries(fetched.map(([name, f]) => [name, f.snapshot]));
 }
-
-/** One-line quota summary for list/quota output. */
-export function summarizeSnapshot(snapshot) {
-  if (!snapshot) return 'quota: not refreshed';
-  if (snapshot.error) return `quota: error (${snapshot.error})`;
-  const pct = (w) => (w ? `${Math.round(w.remaining * 100)}%` : '?');
-  const parts = Object.entries(snapshot.pools).map(([g, w]) => `${g} 5h ${pct(w.short)} weekly ${pct(w.weekly)}`);
-  return `quota: ${parts.join(' | ') || 'no data'}${snapshot.plan_type ? ` (${snapshot.plan_type})` : ''}`;
-}

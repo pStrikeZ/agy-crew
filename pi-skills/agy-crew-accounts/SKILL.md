@@ -27,8 +27,8 @@ node "<skill-dir>/../../companion/agy-companion.mjs" accounts <subcommand> [args
 
 | Command | Purpose |
 | --- | --- |
-| `accounts list [--json]` | Every account with its state, last use and cached quota summary, plus a line for live. Start here. |
-| `accounts quota [<name>...] [--refresh] [--json]` | Cached quota snapshots and cooldowns. `--refresh` queries Google's Cloud Code service and updates the snapshots; it is the only subcommand that uses the network. |
+| `accounts list [--json]` | Aligned tables: each account with email, state and last use (plus a line for live), then a `QUOTA` table (per pool: remaining percent and reset time for the 5h and weekly windows, and how old the snapshot is), then `COOLDOWNS` when any are active. Start here. |
+| `accounts quota [<name>...] [--refresh] [--json]` | The same `QUOTA` table and `COOLDOWNS` section, from cached snapshots. `--refresh` queries Google's Cloud Code service and updates the snapshots; it is the only subcommand that uses the network. |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json`) from an existing HOME-shaped directory, for example an agy-cli-manager account. |
 | `accounts enable <name>` / `accounts disable <name>` | Put an account into or out of automatic selection. |
 | `accounts cooldown clear <name> [--family <f>]` | Drop a recorded quota cooldown. Use it only when the user says the quota is back. |
@@ -55,11 +55,11 @@ If the user already has accounts elsewhere, offer `accounts import` instead of a
 | --- | --- | --- |
 | `ready` | Idle and usable | None. |
 | `busy n` | `n` runs hold it | Normal. A new `auto` run prefers an idle account. |
-| `cooling <family> until <t>` | That model family hit its quota; other families still work | Wait until `<t>`, use another model family or account. Do not clear the cooldown on your own. |
+| `cooling` | A model family hit its quota; other families still work. The `COOLDOWNS` section lists each family with `until <time> (in <duration>)` | Wait until then, use another model family or account. Do not clear the cooldown on your own. |
 | `needs login` | agy rejected the credential | Tell the user to run `agy-crew accounts login <name>`. Never retry. |
 | `disabled` | Excluded from selection | `enable` only if the user asks. |
 
-Cooldowns are per account and per model family (for example `gemini-3.8-flash`, whatever the effort suffix). Quota snapshots show the short-window and weekly remaining fraction per quota pool; they are cached, so `quota --refresh` is needed for current numbers. Refresh only when the user asks about current quota or a run failed with a quota error, not for routine checks.
+Cooldowns are per account and per model family (for example `gemini-3.8-flash`, whatever the effort suffix). The `QUOTA` table shows the short-window (5H) and weekly remaining percent and reset time per quota pool, with times in local clock (`HH:MM` for today, otherwise `MM-DD HH:MM`) and `AS OF` giving the snapshot age; they are cached, so `quota --refresh` is needed for current numbers. Refresh only when the user asks about current quota or a run failed with a quota error, not for routine checks.
 
 ## Choosing an account for a run
 
