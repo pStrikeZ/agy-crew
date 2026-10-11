@@ -1,6 +1,8 @@
 # Design
 
-This document describes how agy-staff is designed as a portable agent CLI tool: bash plus skills, with no hard dependency on a particular host, worker CLI or runtime library. It is the ground truth for the project's behavior and a guide for building the same kind of tool for another agent CLI. Concrete commands, flags and default values are in [REFERENCE.md](REFERENCE.md).
+This document is inherited from [agy-staff](https://github.com/keli-wen/agy-staff) and describes the design that agy-crew builds on.
+
+This document describes how agy-crew is designed as a portable agent CLI tool: bash plus skills, with no hard dependency on a particular host, worker CLI or runtime library. It is the ground truth for the project's behavior and a guide for building the same kind of tool for another agent CLI. Concrete commands, flags and default values are in [REFERENCE.md](REFERENCE.md).
 
 ## 1. The problem and two ideas
 

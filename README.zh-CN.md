@@ -6,108 +6,153 @@
 
 <p align="center"><a href="https://claude.com/claude-code"><img src="assets/badges/claude-code-plugin.svg" height="20" alt="Claude Code plugin"></a> <a href="https://developers.openai.com/codex/"><img src="assets/badges/codex-plugin.svg" height="20" alt="Codex plugin"></a> <a href="LICENSE"><img src="assets/badges/license-mit.svg" height="20" alt="license: MIT"></a></p>
 
-把 Google 的 Antigravity CLI（`agy`）雇来当 **Claude Code**、**OpenAI Codex**、**Pi** 和 **OpenCode** 的「agy 员工」。
+# agy-crew
 
-![agy-staff 设计图](assets/design.png)
+把 Google 的 Antigravity CLI（`agy`）雇来当 **Claude Code**、**OpenAI Codex**、**Pi**、**OpenCode** 等环境的「agy 员工」。agy-crew 是 Keli Wen 的 [agy-staff](https://github.com/keli-wen/agy-staff)（MIT）的 fork，详见[与 agy-staff 的关系](#与-agy-staff-的关系)。
 
-**[安装](#安装) · [使用示例](#使用) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级](#升级)**
+![设计图](assets/design.png)
+
+**[安装](#安装) · [使用示例](#使用) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级](#升级) · [与 agy-staff 的关系](#与-agy-staff-的关系)**
 
 ## 它适合做什么
 
-agy-staff 提供五种角色（persona）。`staffer` 适合通用任务；`researcher` 负责调研；`reviewer` 审查代码、方案和决策；`implementer` 处理编码任务；`ask` 用于不需要工具的简短问答。前四种角色都使用相同的后台任务机制，由 `jobs` 技能负责等待、查看进度和收取结果。
+agy-crew 提供五种角色（persona）。`staffer` 适合通用任务；`researcher` 负责调研；`reviewer` 审查代码、方案和决策；`implementer` 处理编码任务；`ask` 用于不需要工具的简短问答。前四种角色都使用相同的后台任务机制，由 `jobs` 技能负责等待、查看进度和收取结果。执行 `agy-crew install` 之后，所有 harness 都以 `/agy-crew-<persona>` 调用这些角色；通过 harness 的插件方式安装时，Claude Code 使用 `/agy-crew:<persona>`，Codex 使用 `$agy-crew:<persona>`。
 
 为什么需要它：GPT-5.6-Sol 开着 fast mode 也慢；Claude Code 快一些，但 Fable 额度有限，更适合用来编排 subagent，而不是亲自做每一次调研和审查。这些任务可以交给 agy：它几秒钟就能给出第二意见，调研和审查以 Flash 的速度完成，范围明确的实现任务放到后台执行，你继续做手头的事。另外，即使不追求速度，让另一个模型家族审同一份代码，也能发现主力 agent 自己发现不了的问题。
 
 ![主 agent 将部分工作交给后台运行的 agy](assets/why.png)
 
+### 为什么要 fork
+
+agy-crew 保留了 agy-staff 的角色、后台任务，以及“bash 加 skills”的可移植设计，并增加了：
+
+1. 终端命令 `agy-crew` 和 `install` 命令：从同一份共享 bundle 把技能装进检测到的每个 harness，取代各 harness 自己的插件缓存；
+2. 与上游 agy-staff 严格互斥（安装器发现它时拒绝运行）；
+3. **账号池**：让并发任务跑在不同的 agy 账号上，并按账号、按模型家族感知配额。这部分**计划在后续版本中提供，目前尚不可用**。
+
+`-crew` 后缀与作者的 `codex-staff` 对应：`-staff` 是单账号委派，`-crew` 是账号池。
+
 ## 安装
 
-### 手动安装
-
-先安装 Antigravity CLI。下面的命令来自[官方安装文档](https://antigravity.google/docs/cli/install)，安装后用 `agy --version` 确认命令可用。运行插件还需要 Node.js。
+先安装 Antigravity CLI。下面的命令来自[官方安装文档](https://antigravity.google/docs/cli/install)，安装后用 `agy --version` 确认命令可用。运行插件还需要 Node.js 20 或更高版本。
 
 ```bash
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
-接着，在你使用的 agent 环境中安装插件。如果使用 Claude Code，运行：
+接着安装 agy-crew。**agy-crew 与 agy-staff 不能安装在同一台机器上**（见[与 agy-staff 的关系](#与-agy-staff-的关系)），安装器发现 agy-staff 时会拒绝运行。
+
+### 路线 A（推荐）：终端命令
 
 ```bash
-claude plugin marketplace add keli-wen/agy-staff
-claude plugin install agy@agy-staff
+npm install -g github:pStrikeZ/agy-crew
+agy-crew install
 ```
 
-如果使用 Codex，运行：
+也可以从检出目录安装：`git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`，再运行 `agy-crew install`。此时技能直接从检出目录运行，`git pull` 后立即生效；拉取之后请重新运行 `agy-crew install` 以刷新 bundle。
 
-```bash
-codex plugin marketplace add https://github.com/keli-wen/agy-staff
-codex plugin add agy@agy-staff
-```
+`agy-crew install` 会根据配置目录自动检测已有的 harness。参数：`--hosts claude,codex,omp,opencode,dsh`（显式列表）、`--all`、`--dry-run`（只打印计划，不写入）、`--status`（显示各 host 的链接状态和 bundle）、`--json`。`agy-crew uninstall [--hosts …|--all]` 只移除安装器自己创建的链接。
+
+| Host | 技能目录 |
+|---|---|
+| Claude Code（`claude`） | `~/.claude/skills` |
+| Codex（`codex`） | `~/.agents/skills` |
+| Oh My Pi（`omp`） | `~/.omp/agent/skills` |
+| OpenCode（`opencode`） | `~/.config/opencode/skills` |
+| DeepSeek Harness（`dsh`） | `~/.dsh/skills` |
+
+技能只渲染一次，写入 `~/.agy-crew/bundles/<version>-<digest>/`，其中 companion 路径为绝对路径；每个 harness 得到指向该 bundle 的目录链接（`agy-crew-<persona>`，Windows 上是 junction，不需要提权）。技能目录中任何不是安装器创建的内容都视为用户内容，绝不覆盖；出现任何冲突时，整次运行会在写入之前中止，并打印相关路径和处理办法。`install` 不覆盖 Pi，请使用下面的 Pi 软件包方式。
+
+安装后重启 harness 或开启新会话，再做一次验证：`/agy-crew-ask reply with OK`（Codex 中显示为 `$agy-crew-ask`）。`ask` 不调用工具，也不需要额外的权限配置。
+
+### 路线 B：harness 的插件管理器
 
 <details>
-<summary>在 Pi 中安装</summary>
+<summary>Claude Code</summary>
 
-运行 `pi install git:github.com/keli-wen/agy-staff` 安装插件。Pi 中的技能使用 `agy-` 前缀，例如 `/skill:agy-ask reply with OK`；任务管理技能是 `/skill:agy-jobs`。
+```bash
+claude plugin marketplace add pStrikeZ/agy-crew
+claude plugin install agy-crew@agy-crew
+```
 
-更新时运行 `pi update --extension git:github.com/keli-wen/agy-staff`，然后在 Pi 中执行 `/reload`。
+重启 Claude Code 后运行 `/agy-crew:ask reply with OK`。
 
 </details>
 
 <details>
-<summary>在 OpenCode 中安装</summary>
-
-使用 OpenCode V1（已在 1.18.34 验证）的原生插件管理命令安装：
+<summary>Codex</summary>
 
 ```bash
-opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git' --global
+codex plugin marketplace add https://github.com/pStrikeZ/agy-crew
+codex plugin add agy-crew@agy-crew
 ```
 
-重启 OpenCode 后运行 `/agy-ask reply with OK`。插件会自动注册七个 `agy-*` 技能及其原生斜杠命令，包括 `/agy-lead` 和 `/agy-jobs`，无需单独配置技能路径或命令包装。仍需安装 Node.js，并完成 `agy` 登录。
-
-OpenCode 按完整包规格缓存；仅重启不会刷新相同的 Git 规格。升级时选择新的 Git 标签或提交，运行 `opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git#<tag-or-commit>' --global --force`，然后重启。配置与本地开发方式见[参考手册](docs/REFERENCE.zh-CN.md#opencode)。此适配器不覆盖 OpenCode V2。
+重启 Codex 后运行 `$agy-crew:ask reply with OK`。Codex 的命令沙箱无法运行 agy，companion 命令必须在沙箱之外运行（见 [INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md)）。
 
 </details>
 
-安装完成后，重启 Claude Code 或 Codex，再做一次简单的验证：在 Claude Code 中输入 `/agy:ask reply with OK`，在 Codex 中输入 `$agy:ask reply with OK`。`ask` 不调用工具，也不需要额外的权限配置。
+<details>
+<summary>Pi</summary>
+
+运行 `pi install git:github.com/pStrikeZ/agy-crew` 安装插件。Pi 中的技能使用 `agy-crew-` 前缀，例如 `/skill:agy-crew-ask reply with OK`；任务管理技能是 `/skill:agy-crew-jobs`。
+
+更新时运行 `pi update --extension git:github.com/pStrikeZ/agy-crew`，然后在 Pi 中执行 `/reload`。
+
+</details>
+
+<details>
+<summary>OpenCode</summary>
+
+使用 OpenCode V1（≥1.18.34 <2）的原生插件管理命令安装：
+
+```bash
+opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global
+```
+
+重启 OpenCode 后运行 `/agy-crew-ask reply with OK`。插件会自动注册七个 `agy-crew-*` 技能及其原生斜杠命令，包括 `/agy-crew-lead` 和 `/agy-crew-jobs`，无需单独配置技能路径或命令包装。仍需安装 Node.js，并完成 `agy` 登录。
+
+OpenCode 按完整包规格缓存；仅重启不会刷新相同的 Git 规格。升级时选择新的 Git 标签或提交，运行 `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`，然后重启。配置与本地开发方式见[参考手册](docs/REFERENCE.zh-CN.md#opencode)。此适配器不覆盖 OpenCode V2。
+
+</details>
 
 > [!IMPORTANT]
 > `staffer`、`researcher`、`reviewer` 和 `implementer` 默认使用 `unrestricted` 权限配置，可以读取仓库、运行命令和修改文件。插件会通过提示词说明任务边界和已有改动的归属；任务明确要求提交、推送或创建 PR 时，agy 才应执行相应操作，否则留下工作区改动供你审查。这些提示约定不能替代权限隔离。
 >
-> 日常使用不需要先运行 `setup`。如果希望保留 agy 自身的权限检查，可以选择 `--restricted`，并通过 `setup` 配置允许执行的命令。`setup` 默认只展示计划，经你确认后才写入配置。使用前请阅读[权限说明](docs/REFERENCE.zh-CN.md#可选加固-setup)，了解全局命令允许列表的作用范围，以及审查不可信内容时的限制。
+> 日常使用不需要先运行 `setup`。如果希望保留 agy 自身的权限检查，可以选择 `--restricted`，并通过 `setup` 配置允许执行的命令。`setup` 默认只展示计划，经你确认后才写入配置（它会修改全局的 `~/.gemini/antigravity-cli/settings.json`）。按仓库保存的策略文件是 `.agy-crew/config.json`。使用前请阅读[权限说明](docs/REFERENCE.zh-CN.md#可选加固-setup)，了解全局命令允许列表的作用范围，以及审查不可信内容时的限制。
 
 ### 让 agent 帮你安装
 
 也可以把下面这段话交给你的 coding agent，让它按照仓库里的说明完成安装和验证：
 
 ```
-Read the raw text of https://raw.githubusercontent.com/keli-wen/agy-staff/master/docs/INSTALL_FOR_AGENTS.md
-(curl it — do not work from a summary), or the same file in your local checkout of agy-staff, and follow it to
-install and verify the agy-staff plugin for the harness you are running in. Respond in the user's language.
+Read the raw text of https://raw.githubusercontent.com/pStrikeZ/agy-crew/master/docs/INSTALL_FOR_AGENTS.md
+(curl it — do not work from a summary), or the same file in your local checkout of agy-crew, and follow it to
+install and verify the agy-crew plugin for the harness you are running in. Respond in the user's language.
 ```
 
 ## 使用
 
-在 Claude Code 中输入 `/agy:`，就能选择要使用的角色：
+在 harness 中输入 `/agy-crew-`，就能选择要使用的角色；通过 Claude Code 的插件方式安装时，写法是 `/agy-crew:staffer`。下面两张截图来自 agy-staff，仍然显示上游的名称（`/agy:`、`$agy`）：
 
-![Claude Code 中的 /agy: 命令菜单](assets/claude-code-screenshot.png)
+![Claude Code 中的命令菜单](assets/claude-code-screenshot.png)
 
-在 Codex 中输入 `$agy`，可以找到对应的技能：
+在 Codex 中可以找到对应的技能：
 
-![Codex 中的 $agy 技能选择器](assets/codex-desktop-screenshot.png)
+![Codex 中的技能选择器](assets/codex-desktop-screenshot.png)
 
-下面的示例使用 Claude Code 的 `/agy:…` 写法。在 Codex 中把它换成 `$agy:…` 即可；Pi 使用 `/skill:agy-…`，OpenCode 使用 `/agy-…`。
+下面的示例使用用户级写法 `/agy-crew-…`（Codex 中显示为 `$agy-crew-…`）。通过插件方式安装时，Claude Code 使用 `/agy-crew:…`，Codex 使用 `$agy-crew:…`；Pi 使用 `/skill:agy-crew-…`。
 
 | 想做的事 | 示例 |
 | --- | --- |
-| 编排持续推进的任务 | `/agy:lead 调研可选方案，起草提案，再根据我的反馈修订` |
-| 问一个简短的问题 | `/agy:ask 你的后端模型是什么` |
-| 交办一个通用任务 | `/agy:staffer 汇总这个仓库里所有未完成的 TODO` |
-| 生成图片 | `/agy:staffer 生成一个像素风机器人吉祥物，存为 assets/mascot.png` |
-| 审查当前改动 | `/agy:reviewer 检查当前工作区的改动` |
-| 审查某个 PR | `/agy:reviewer 审查 PR #730` |
-| 审查方案 | `/agy:reviewer 检查 docs/plan.md 中的迁移方案，指出可能遗漏的问题` |
-| 调研代码 | `/agy:researcher 这个仓库的鉴权是怎么做的` |
-| 实现修复 | `/agy:implementer 修复那个不稳定的重试测试` |
+| 编排持续推进的任务 | `/agy-crew-lead 调研可选方案，起草提案，再根据我的反馈修订` |
+| 问一个简短的问题 | `/agy-crew-ask 你的后端模型是什么` |
+| 交办一个通用任务 | `/agy-crew-staffer 汇总这个仓库里所有未完成的 TODO` |
+| 生成图片 | `/agy-crew-staffer 生成一个像素风机器人吉祥物，存为 assets/mascot.png` |
+| 审查当前改动 | `/agy-crew-reviewer 检查当前工作区的改动` |
+| 审查某个 PR | `/agy-crew-reviewer 审查 PR #730` |
+| 审查方案 | `/agy-crew-reviewer 检查 docs/plan.md 中的迁移方案，指出可能遗漏的问题` |
+| 调研代码 | `/agy-crew-researcher 这个仓库的鉴权是怎么做的` |
+| 实现修复 | `/agy-crew-implementer 修复那个不稳定的重试测试` |
 | 查看或继续任务 | 直接说“agy 的任务进展如何”或“继续刚才的任务，再检查一下错误路径” |
 
 使用 `reviewer` 时，直接说明审查对象即可。agy 会自行调用 `gh pr view`、`git diff` 等命令收集材料，也可以读取指定文件。代码审查会按严重程度列出问题；方案和决策审查则会检查假设、取舍和可能遗漏的情况。
@@ -116,7 +161,7 @@ install and verify the agy-staff plugin for the harness you are running in. Resp
 
 ## 核心设计
 
-`lead` 为当前主 agent 增加任务编排指导。在 lead 工作流中，主 agent 了解至足以明确任务后，默认用 `staffer` 承担实质性工作，等待结果返回后再验收、整合或追加任务；专门指导有帮助时再选择 specialist，`ask` 仅用于测试。主 agent 负责跨任务决策、验收、整合和交付，复用现有 jobs 工作流。Claude Code 使用 `/agy:lead`，Codex 使用 `$agy:lead`，Pi 使用 `/skill:agy-lead`，OpenCode 使用 `/agy-lead`。
+`lead` 为当前主 agent 增加任务编排指导。在 lead 工作流中，主 agent 了解至足以明确任务后，默认用 `staffer` 承担实质性工作，等待结果返回后再验收、整合或追加任务；专门指导有帮助时再选择 specialist，`ask` 仅用于测试。主 agent 负责跨任务决策、验收、整合和交付，复用现有 jobs 工作流。使用 `/agy-crew-lead`（Claude Code 插件方式为 `/agy-crew:lead`，Codex 插件方式为 `$agy-crew:lead`，Pi 为 `/skill:agy-crew-lead`）。
 
 `ask` 会在同一次调用中返回答案。其他角色启动后会先返回任务 ID，并给出收取结果的命令，例如 `wait <id> --timeout 10m`。主 agent 根据所在环境的能力等待任务；如果支持后台命令，就为每个任务保留一个独立的等待命令。
 
@@ -132,10 +177,10 @@ install and verify the agy-staff plugin for the harness you are running in. Resp
 
 ## 为其他 CLI 做一个
 
-agy-staff 的设计是可移植（portable）的：只用 bash 和 skills，不强依赖特定的宿主、worker CLI 或运行时库。[docs/DESIGN.md](docs/DESIGN.md)（英文）把这套设计整理成了最佳实践。如果想为其他 agent CLI 做同类工具，可以把下面这段话交给你的 coding agent：
+agy-crew 从 agy-staff 继承的设计是可移植（portable）的：只用 bash 和 skills，不强依赖特定的宿主、worker CLI 或运行时库。[docs/DESIGN.md](docs/DESIGN.md)（英文）把这套设计整理成了最佳实践。如果想为其他 agent CLI 做同类工具，可以把下面这段话交给你的 coding agent：
 
 ```
-Read the raw text of https://raw.githubusercontent.com/keli-wen/agy-staff/master/docs/DESIGN.md
+Read the raw text of https://raw.githubusercontent.com/pStrikeZ/agy-crew/master/docs/DESIGN.md
 (curl it — do not work from a summary). Then design an integration that lets this host agent delegate
 work to <CLI> the same way. First read `<CLI> --help`, map what the CLI supports to the section
 "What depends on the worker CLI", and list the principles it cannot support before writing any code.
@@ -146,21 +191,31 @@ agent 动手写代码之前，会先列出你的 CLI 支持不了哪些原则，
 
 ## 升级
 
-Claude Code 和 Codex 使用的是安装时复制到缓存中的插件。仓库发布新版本后，需要主动更新，并重启应用才能加载新的技能。
+路线 A（终端命令）：用 npm 安装时，再次运行 `npm install -g github:pStrikeZ/agy-crew`，然后运行 `agy-crew install`；使用检出目录时，运行 `git pull`，再运行 `agy-crew install` 刷新 bundle。之后重启 harness。
+
+路线 B：Claude Code 和 Codex 使用的是安装时复制到缓存中的插件。仓库发布新版本后，需要主动更新，并重启应用才能加载新的技能。
 
 Claude Code 的更新命令是：
 
 ```bash
-claude plugin marketplace update agy-staff && claude plugin update agy@agy-staff
+claude plugin marketplace update agy-crew && claude plugin update agy-crew@agy-crew
 ```
 
 Codex 的更新命令是：
 
 ```bash
-codex plugin marketplace upgrade && codex plugin add agy@agy-staff
+codex plugin marketplace upgrade && codex plugin add agy-crew@agy-crew
 ```
 
 这两个环境都按版本号管理插件缓存。如果更新后仍然看到旧行为，请先确认是否已重启应用，再参考[升级说明](docs/REFERENCE.zh-CN.md#升级)检查版本和实际安装的提交。Pi 和 OpenCode 的更新方式见上方安装说明。
+
+## 与 agy-staff 的关系
+
+agy-crew 是 Keli Wen 的 [agy-staff](https://github.com/keli-wen/agy-staff) v0.7.4 的 fork，采用相同的 MIT 许可证。版本号延续 agy-staff 的历史（本 fork 从 0.8.0 开始）。
+
+改动内容：全面重命名（插件 id `agy-crew@agy-crew`，仓库内状态目录 `.agy-crew/`，运行信息前缀 `[agy-crew]`，错误前缀 `agy-crew error:`）；新增终端命令和跨 harness 的 `install`；账号池仍在计划中。上游的改动在适用时会继续合并进来。
+
+agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面前，并写入同一份仓库状态，因此发现 agy-staff 时，`agy-crew install` 会拒绝运行并说明如何移除。没有原地升级：先卸载 agy-staff，再安装 agy-crew；`.agy-staff/` 中的状态不会迁移。想换回上游，请先运行 `agy-crew uninstall --all`。详见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [0.8.0 发布说明](docs/releases/v0.8.0.md)。
 
 ## 社区
 
@@ -172,10 +227,10 @@ codex plugin marketplace upgrade && codex plugin add agy@agy-staff
 
 提交代码前请运行 `npm test`。标准测试使用临时仓库、临时 HOME 和假的 agy，不会调用真实模型或改动你的个人配置。新增回归测试也应保持这一点。需要验证真实 AGY 时，请使用[测试说明](tests/README.md)中单独启用的集成测试。
 
-运行逻辑位于 `companion/`：入口负责模式和任务命令，独立模块负责流式执行、进度快照和状态锁。角色技能位于 `skills/`，共享的提示词模板位于 `templates/`。修改技能时请以 `skills/` 为准，再运行 `npm run generate:skills` 生成 `pi-skills/` 与 `opencode-skills/`，用 `npm run check:skills` 检查一致性。不要直接编辑生成文件；原有 `generate:pi` 和 `check:pi` 命令仍然可用。打包时使用 `npm run pack:checked`，先检查一致性再生成归档；发布前也会自动检查。
+运行逻辑位于 `companion/`：入口负责模式和任务命令，独立模块负责流式执行、进度快照、状态锁、产品标识（`identity.mjs`）和跨 harness 安装器（`install.mjs`）。角色技能位于 `skills/`，共享的提示词模板位于 `templates/`。修改技能时请以 `skills/` 为准，再运行 `npm run generate:skills` 生成 `pi-skills/` 与 `opencode-skills/`，用 `npm run check:skills` 检查一致性。不要直接编辑生成文件；原有 `generate:pi` 和 `check:pi` 命令仍然可用。打包时使用 `npm run pack:checked`，先检查一致性再生成归档；发布前也会自动检查。
 
 README 和参考手册都有中英文版本。修改使用方法或行为说明时，请同步更新对应版本，让两种语言的读者得到一致的信息。
 
 ## 许可证
 
-本项目采用 MIT 许可证，详见 [LICENSE](LICENSE)。
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。原始版权归 Keli (pkuwkl)，fork 的改动由 pStrikeZ 完成。

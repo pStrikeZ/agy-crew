@@ -6,123 +6,172 @@
 
 <p align="center"><a href="https://claude.com/claude-code"><img src="assets/badges/claude-code-plugin.svg" height="20" alt="Claude Code plugin"></a> <a href="https://developers.openai.com/codex/"><img src="assets/badges/codex-plugin.svg" height="20" alt="Codex plugin"></a> <a href="LICENSE"><img src="assets/badges/license-mit.svg" height="20" alt="license: MIT"></a></p>
 
-Hire Google's Antigravity CLI (`agy`) as a staffer for **Claude Code**, **OpenAI Codex**, **Pi**, and **OpenCode**.
+# agy-crew
 
-![agy-staff design](assets/design.png)
+Hire Google's Antigravity CLI (`agy`) as a staffer for **Claude Code**, **OpenAI Codex**, **Pi**, **OpenCode** and more. agy-crew is a fork of [agy-staff](https://github.com/keli-wen/agy-staff) by Keli Wen (MIT); see [Relationship to agy-staff](#relationship-to-agy-staff).
 
-**[Install](#install) · [Examples](#cujs) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Upgrade](#upgrade)**
+![design diagram](assets/design.png)
+
+**[Install](#install) · [Examples](#cujs) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Upgrade](#upgrade) · [Relationship to agy-staff](#relationship-to-agy-staff)**
 
 ## What & Why
 
-agy-staff lets your senior agents delegate to `agy`, which ships fast Gemini 3.8 Flash. Five personas: staffer (general-purpose), researcher, reviewer (code **and** plans/decisions), implementer, and ask — plus a model-facing jobs skill. Claude Code uses `/agy:<persona>` and Codex uses `$agy:<persona>`.
+agy-crew lets your senior agents delegate to `agy`, which ships fast Gemini 3.8 Flash. Five personas: staffer (general-purpose), researcher, reviewer (code **and** plans/decisions), implementer, and ask — plus a model-facing jobs skill. After `agy-crew install` every harness invokes them as `/agy-crew-<persona>`; the harness plugin routes use `/agy-crew:<persona>` (Claude Code) and `$agy-crew:<persona>` (Codex).
 
 If you use Codex you know the feeling: GPT-5.6-Sol is slow even with fast mode on. Claude Code is quicker but still not fast, and Fable quota is scarce enough that you want it orchestrating subagents, not grinding through every survey and review itself. An agy worker gives you a fast lane — second opinions in seconds, research and reviews at Flash speed, scoped implementation handled off to the side while you keep moving. And where speed isn't the point, a second model family looking at the same code buys coverage and robustness your main agent can't give itself.
 
 ![two overloaded senior agents hand the baton to one fast agy worker](assets/why.png)
 
+### Why a fork
+
+agy-crew keeps agy-staff's personas, background jobs and portable bash-plus-skills design, and adds:
+
+1. a terminal command `agy-crew` and an `install` command that puts the skills into every detected harness from one shared bundle, replacing per-harness plugin caches;
+2. strict mutual exclusion with upstream agy-staff (the installer refuses to run beside it);
+3. an **account pool** for running concurrent jobs on different agy accounts with per-account, per-model-family quota awareness. This part is **planned for the next releases and is not available yet**.
+
+The `-crew` suffix pairs with the author's `codex-staff`: `-staff` is single-account delegation, `-crew` is pooled.
+
 ## How
 
 ### Invoke a persona
 
-Type `/agy:` in Claude Code and the five personas are right there:
+Type `/agy-crew-` in your harness and the five personas are listed. Through the Claude Code plugin route the form is `/agy-crew:staffer`. The screenshots below come from agy-staff and still show its upstream names (`/agy:`, `$agy`).
 
-![the /agy: command menu in Claude Code](assets/claude-code-screenshot.png)
+![the command menu in Claude Code](assets/claude-code-screenshot.png)
 
-Same plugin in Codex, invoked with `$agy`:
+The same skills in Codex:
 
-![the $agy skill picker in Codex](assets/codex-desktop-screenshot.png)
+![the skill picker in Codex](assets/codex-desktop-screenshot.png)
 
 ### Install
 
-#### For humans
-
-Step 1 — install the Antigravity CLI ([official docs](https://antigravity.google/docs/cli/install)), then verify with `agy --version`. Node.js is also required:
+Step 1 — install the Antigravity CLI ([official docs](https://antigravity.google/docs/cli/install)), then verify with `agy --version`. Node.js 20+ is also required:
 
 ```bash
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
-Step 2 — install the plugin into your harness:
+Step 2 — install agy-crew. **agy-crew and agy-staff must not be installed on the same machine** (see [Relationship to agy-staff](#relationship-to-agy-staff)); the installer refuses to run beside it.
+
+#### Route A (recommended): terminal command
 
 ```bash
-claude plugin marketplace add keli-wen/agy-staff
-claude plugin install agy@agy-staff
+npm install -g github:pStrikeZ/agy-crew
+agy-crew install
 ```
 
-```bash
-codex plugin marketplace add https://github.com/keli-wen/agy-staff
-codex plugin add agy@agy-staff
-```
+Or from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
+
+`agy-crew install` auto-detects the harnesses present by their config directories. Flags: `--hosts claude,codex,omp,opencode,dsh` (explicit list), `--all`, `--dry-run` (print the plan, write nothing), `--status` (show per-host link state and bundles), `--json`. `agy-crew uninstall [--hosts …|--all]` removes only links it created.
+
+| Host | Skills directory |
+|---|---|
+| Claude Code (`claude`) | `~/.claude/skills` |
+| Codex (`codex`) | `~/.agents/skills` |
+| Oh My Pi (`omp`) | `~/.omp/agent/skills` |
+| OpenCode (`opencode`) | `~/.config/opencode/skills` |
+| DeepSeek Harness (`dsh`) | `~/.dsh/skills` |
+
+The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths, and each harness gets a directory link (`agy-crew-<persona>`; a junction on Windows, no elevation needed) pointing into that bundle. Anything in a skills directory that the installer did not create is user content and is never overwritten; any conflict aborts the whole run before writing and prints the paths plus a remedy. Pi is not covered by `install`; use the Pi package route below.
+
+Restart the harness or open a new session afterwards. Smoke test: `/agy-crew-ask reply with OK` (Codex shows it as `$agy-crew-ask`). Ask is tool-free and needs no permission setup.
+
+#### Route B: harness plugin managers
 
 <details>
-<summary>Using Pi?</summary>
+<summary>Claude Code</summary>
 
-Install: `pi install git:github.com/keli-wen/agy-staff`.
-Skills are prefixed as `/skill:agy-<persona>` (e.g. `/skill:agy-ask reply with OK`), with `/skill:agy-jobs` for job management.
-Update with `pi update --extension git:github.com/keli-wen/agy-staff`, then run `/reload`.
+```bash
+claude plugin marketplace add pStrikeZ/agy-crew
+claude plugin install agy-crew@agy-crew
+```
+
+Restart Claude Code, then run `/agy-crew:ask reply with OK`.
 
 </details>
 
 <details>
-<summary>Using OpenCode?</summary>
-
-With OpenCode V1 (verified on 1.18.34), install the package through its native plugin manager:
+<summary>Codex</summary>
 
 ```bash
-opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git' --global
+codex plugin marketplace add https://github.com/pStrikeZ/agy-crew
+codex plugin add agy-crew@agy-crew
 ```
 
-Restart OpenCode, then run `/agy-ask reply with OK`. The plugin automatically registers all seven `agy-*` skills and their native slash commands, including `/agy-lead` and `/agy-jobs`. No separate skills path or command wrappers are needed. Node.js and an authenticated `agy` are required, as above.
-
-OpenCode caches the complete package spec. Restarting does not refresh an unchanged Git spec. To upgrade, choose a newer Git tag or commit and run `opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git#<tag-or-commit>' --global --force`, then restart. See [the reference](docs/REFERENCE.md#opencode) for config and local development. OpenCode V2 is not covered by this adapter.
+Restart Codex, then run `$agy-crew:ask reply with OK`. Codex's command sandbox cannot run agy; companion commands must run unsandboxed (see [INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md)).
 
 </details>
 
-Restart Claude Code or Codex afterwards. First run: `/agy:ask reply with OK` (Claude Code) or `$agy:ask reply with OK` (Codex). Ask is tool-free and needs no setup.
+<details>
+<summary>Pi</summary>
+
+Install: `pi install git:github.com/pStrikeZ/agy-crew`.
+Skills are prefixed as `/skill:agy-crew-<persona>` (e.g. `/skill:agy-crew-ask reply with OK`), with `/skill:agy-crew-jobs` for job management.
+Update with `pi update --extension git:github.com/pStrikeZ/agy-crew`, then run `/reload`.
+
+</details>
+
+<details>
+<summary>OpenCode</summary>
+
+With OpenCode V1 (≥1.18.34 <2), install the package through its native plugin manager:
+
+```bash
+opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global
+```
+
+Restart OpenCode, then run `/agy-crew-ask reply with OK`. The plugin automatically registers all seven `agy-crew-*` skills and their native slash commands, including `/agy-crew-lead` and `/agy-crew-jobs`. No separate skills path or command wrappers are needed. Node.js and an authenticated `agy` are required, as above.
+
+OpenCode caches the complete package spec. Restarting does not refresh an unchanged Git spec. To upgrade, choose a newer Git tag or commit and run `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`, then restart. See [the reference](docs/REFERENCE.md#opencode) for config and local development. OpenCode V2 is not covered by this adapter.
+
+</details>
 
 > [!IMPORTANT]
-> **There is no mandatory setup step.** `staffer`, `researcher`, `reviewer` and `implementer` run **unrestricted** by default: agy can inspect the repo, run commands, and edit files. agy-staff keeps that practical with prompts that adapt to the current repo state. For example, when `implementer` starts in a dirty workspace, the companion tells agy which files already had changes and reminds it not to overwrite or deliver unrelated user work. If the task asks for a commit, push, or PR, agy can do that delivery; otherwise it leaves a working-tree diff for review. These prompt instructions do not provide permission isolation.
-> `setup` + `--restricted` is **optional hardening** for untrusted input — per run (`--restricted`) or as a per-repo default (`setup --restrict review,research`). `setup` dry-runs and asks before writing anything ("set up agy" triggers it); read the [permission notes](docs/REFERENCE.md#optional-hardening-setup) first — the allowlist is prefix-matched, applies machine-wide, and a restricted run can return less than an unrestricted one.
+> **There is no mandatory setup step.** `staffer`, `researcher`, `reviewer` and `implementer` run **unrestricted** by default: agy can inspect the repo, run commands, and edit files. agy-crew keeps that practical with prompts that adapt to the current repo state. For example, when `implementer` starts in a dirty workspace, the companion tells agy which files already had changes and reminds it not to overwrite or deliver unrelated user work. If the task asks for a commit, push, or PR, agy can do that delivery; otherwise it leaves a working-tree diff for review. These prompt instructions do not provide permission isolation.
+> `setup` + `--restricted` is **optional hardening** for untrusted input — per run (`--restricted`) or as a per-repo default (`setup --restrict review,research`). `setup` dry-runs and asks before writing anything ("set up agy" triggers it); read the [permission notes](docs/REFERENCE.md#optional-hardening-setup) first — the allowlist is prefix-matched, applies machine-wide (it edits the global `~/.gemini/antigravity-cli/settings.json`), and a restricted run can return less than an unrestricted one. The per-repo policy file is `.agy-crew/config.json`.
 
 #### For agents
 
 Paste this into any coding agent:
 
 ```
-Read the raw text of https://raw.githubusercontent.com/keli-wen/agy-staff/master/docs/INSTALL_FOR_AGENTS.md (curl it — do not
-work from a summary) and follow it to install and verify the agy-staff plugin for the harness you are running in.
+Read the raw text of https://raw.githubusercontent.com/pStrikeZ/agy-crew/master/docs/INSTALL_FOR_AGENTS.md (curl it — do not
+work from a summary) and follow it to install and verify the agy-crew plugin for the harness you are running in.
 Respond in the user's language.
 ```
 
 #### Upgrade
 
-Claude Code and Codex install a *copy*, so a new version only reaches you when you pull it in yourself:
+Route A (terminal command): for an npm install run `npm install -g github:pStrikeZ/agy-crew` again, then `agy-crew install`; for a checkout run `git pull`, then `agy-crew install` to refresh the bundle. Restart the harness afterwards.
+
+Route B: Claude Code and Codex install a *copy*, so a new version only reaches you when you pull it in yourself:
 
 ```bash
-claude plugin marketplace update agy-staff && claude plugin update agy@agy-staff
+claude plugin marketplace update agy-crew && claude plugin update agy-crew@agy-crew
 ```
 
 ```bash
-codex plugin marketplace upgrade && codex plugin add agy@agy-staff  # then restart Codex
+codex plugin marketplace upgrade && codex plugin add agy-crew@agy-crew  # then restart Codex
 ```
 
-Claude Code and Codex cache per version directory, so an upgrade lands only if the plugin version changed; restart the harness afterwards. If a fix does not show up, see [upgrading](docs/REFERENCE.md#upgrading) — it has the force-refresh command.
+Claude Code and Codex cache per version directory, so an upgrade lands only if the plugin version changed; restart the harness afterwards. If a fix does not show up, see [upgrading](docs/REFERENCE.md#upgrading) — it has the force-refresh command. Pi and OpenCode upgrades are described in their sections above.
 
 ### CUJs
 
-Examples below use Claude Code's `/agy:…`; in Codex use `$agy:…`, in Pi `/skill:agy-…`, and in OpenCode `/agy-…`.
+Examples below use the user-level form `/agy-crew-…` (Codex shows it as `$agy-crew-…`). Through the plugin routes use `/agy-crew:…` on Claude Code and `$agy-crew:…` on Codex; on Pi use `/skill:agy-crew-…`.
 
 | Use case | Invocation |
 |---|---|
-| Lead an ongoing task | `/agy:lead investigate the options, draft a proposal, and revise it with my feedback` |
-| Quick second opinion | `/agy:ask what's your backend model` |
-| A general task | `/agy:staffer summarize the open TODOs in this repo` |
-| Generate an image | `/agy:staffer generate a pixel-art robot mascot, save it as assets/mascot.png` |
-| Review the working tree | `/agy:reviewer Review the current working tree` |
-| Review a PR | `/agy:reviewer Review PR #730` |
-| Review a plan or decision | `/agy:reviewer Challenge the migration plan in docs/plan.md` |
-| Survey a topic | `/agy:researcher how does auth work in this repo` |
-| Implement a scoped fix | `/agy:implementer fix the flaky retry test` |
+| Lead an ongoing task | `/agy-crew-lead investigate the options, draft a proposal, and revise it with my feedback` |
+| Quick second opinion | `/agy-crew-ask what's your backend model` |
+| A general task | `/agy-crew-staffer summarize the open TODOs in this repo` |
+| Generate an image | `/agy-crew-staffer generate a pixel-art robot mascot, save it as assets/mascot.png` |
+| Review the working tree | `/agy-crew-reviewer Review the current working tree` |
+| Review a PR | `/agy-crew-reviewer Review PR #730` |
+| Review a plan or decision | `/agy-crew-reviewer Challenge the migration plan in docs/plan.md` |
+| Survey a topic | `/agy-crew-researcher how does auth work in this repo` |
+| Implement a scoped fix | `/agy-crew-implementer fix the flaky retry test` |
 | Job ops (wait/status/cancel/continue) | natural language: "is the agy job done?", "continue: also check the error path" |
 
 `reviewer` is fully prompt-based: you describe the subject and agy gathers the evidence itself (`gh pr view`, `git diff`, reading the file) — there is no flag for handing it a diff. It has two flavors, routed by subject: code review (severity-ranked findings) and general review (a multi-angle challenge of a plan, design, or decision).
@@ -131,7 +180,7 @@ Examples below use Claude Code's `/agy:…`; in Codex use `$agy:…`, in Pi `/sk
 
 ## Core design
 
-`lead` adds task orchestration guidance for your current agent. Within lead, orient enough to frame the assignment, delegate substantive work to `staffer` by default, wait for the result, then assess it and integrate or follow up. Specialists provide dedicated guidance when useful, while `ask` is reserved for testing. The host owns cross-task decisions, acceptance, integration, and delivery, using the existing jobs workflow. Invoke `/agy:lead` in Claude Code, `$agy:lead` in Codex, `/skill:agy-lead` in Pi, or `/agy-lead` in OpenCode.
+`lead` adds task orchestration guidance for your current agent. Within lead, orient enough to frame the assignment, delegate substantive work to `staffer` by default, wait for the result, then assess it and integrate or follow up. Specialists provide dedicated guidance when useful, while `ask` is reserved for testing. The host owns cross-task decisions, acceptance, integration, and delivery, using the existing jobs workflow. Invoke `/agy-crew-lead` (or `/agy-crew:lead` on the Claude Code plugin route, `$agy-crew:lead` on the Codex plugin route, `/skill:agy-crew-lead` on Pi).
 
 `ask` answers in the same call. The other personas return a job id and a collection command, such as `wait <id> --timeout 10m`. Your agent waits using the host's available capabilities, with one independent background wait per job where supported.
 
@@ -147,10 +196,10 @@ Jobs have a separate execution deadline: default 60 minutes, configurable at lau
 
 ## Build one for another CLI
 
-agy-staff's design is portable: bash plus skills, with no hard dependency on a host, a worker CLI or a runtime library. [docs/DESIGN.md](docs/DESIGN.md) writes it down as best practice. To build the same kind of tool for another agent CLI, give your coding agent this prompt:
+agy-crew's design, inherited from agy-staff, is portable: bash plus skills, with no hard dependency on a host, a worker CLI or a runtime library. [docs/DESIGN.md](docs/DESIGN.md) writes it down as best practice. To build the same kind of tool for another agent CLI, give your coding agent this prompt:
 
 ```
-Read the raw text of https://raw.githubusercontent.com/keli-wen/agy-staff/master/docs/DESIGN.md
+Read the raw text of https://raw.githubusercontent.com/pStrikeZ/agy-crew/master/docs/DESIGN.md
 (curl it — do not work from a summary). Then design an integration that lets this host agent delegate
 work to <CLI> the same way. First read `<CLI> --help`, map what the CLI supports to the section
 "What depends on the worker CLI", and list the principles it cannot support before writing any code.
@@ -158,6 +207,14 @@ Ask me before any call that spends model quota. Respond in the user's language.
 ```
 
 Before writing any code, the agent lists the principles your CLI cannot support, so you know up front where the tool will degrade.
+
+## Relationship to agy-staff
+
+agy-crew is a fork of [agy-staff](https://github.com/keli-wen/agy-staff) v0.7.4 by Keli Wen, published under the same MIT license. Version numbering continues the agy-staff history (this fork starts at 0.8.0).
+
+What changed: the product was renamed throughout (plugin id `agy-crew@agy-crew`, per-repository state in `.agy-crew/`, `[agy-crew]` telemetry, `agy-crew error:` prefix), a terminal command and cross-harness `install` were added, and an account pool is planned. Upstream changes continue to be merged where they apply.
+
+agy-crew and agy-staff cannot coexist: both would show their skills to the agent and write the same per-repository state, so `agy-crew install` refuses to run when it finds agy-staff and prints how to remove it. There is no in-place upgrade; uninstall agy-staff, then install agy-crew. State in `.agy-staff/` is not migrated. To go back to upstream, run `agy-crew uninstall --all` first. See [LICENSE](LICENSE) and [NOTICE](NOTICE), and the [0.8.0 release notes](docs/releases/v0.8.0.md).
 
 ## Community
 
@@ -171,11 +228,11 @@ A few things worth knowing before you open a PR:
 
 - **Run the tests**: `npm test`. The standard suite uses temporary repos and HOME directories with fake `agy`, plus focused module tests. Keep regression tests offline and independent of personal settings. Real AGY validation is a separate opt-in suite described in [tests/README.md](tests/README.md).
 - **Docs come in pairs**: `README.md` / `README.zh-CN.md` and `docs/REFERENCE.md` / `docs/REFERENCE.zh-CN.md` are kept in sync. Change one, change its counterpart.
-- **Runtime code lives in `companion/`**: the entrypoint handles modes and job commands; separate modules handle streaming execution, observations and state locking. Skills call the companion, and `templates/` holds the shared prompts.
+- **Runtime code lives in `companion/`**: the entrypoint handles modes and job commands; separate modules handle streaming execution, observations and state locking, product identity (`identity.mjs`) and the cross-harness installer (`install.mjs`). Skills call the companion, and `templates/` holds the shared prompts.
 - **Canonical skills are the source of truth**: edit personas in `skills/`, never in `pi-skills/` or `opencode-skills/`. Run `npm run generate:skills` to generate both host entrypoints, and `npm run check:skills` to verify consistency. The existing `generate:pi` and `check:pi` commands remain available. Use `npm run pack:checked` to check freshness before packing; publishing also runs the check.
 
 Adding a mode or a flag changes the public surface, so please open an issue first and we can agree on the shape.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Original copyright Keli (pkuwkl); fork changes by pStrikeZ.

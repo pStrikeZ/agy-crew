@@ -1,4 +1,4 @@
-# agy-staff — Full reference
+# agy-crew — Full reference
 
 Back to the [README](../README.md). See the [Chinese reference](REFERENCE.zh-CN.md).
 
@@ -12,11 +12,11 @@ Back to the [README](../README.md). See the [Chinese reference](REFERENCE.zh-CN.
 | `reviewer` | `review` | Second-opinion verifier, two flavors routed by subject: code review (severity-ranked findings with `file:line` refs) and general review (multi-angle challenge of a plan, design, or decision) | `gemini-3.8-flash-medium` | unrestricted | background job — returns a job id |
 | `implementer` | `implement` | Well-scoped coding task; agy edits the working tree and can perform explicitly requested Git delivery | `gemini-3.8-flash-high` | unrestricted | background job — returns a job id |
 
-`lead` provides task orchestration guidance for the current agent, reusing the existing companion modes without adding a mode of its own; invoke `/agy:lead` in Claude Code, `$agy:lead` in Codex, `/skill:agy-lead` in Pi, or `/agy-lead` in OpenCode.
+`lead` provides task orchestration guidance for the current agent, reusing the existing companion modes without adding a mode of its own; invoke `/agy-crew:lead` in Claude Code, `$agy-crew:lead` in Codex, `/skill:agy-crew-lead` in Pi, or `/agy-crew-lead` in OpenCode.
 
 Execution style is fixed per mode and cannot be overridden by a flag. `continue` inherits the resolved mode's style (continuing an `ask` stays synchronous; continuing the others returns a job id).
 
-Claude Code, Codex, Pi, and OpenCode surface the same personas, backed by one companion script (`companion/agy-companion.mjs`, Node stdlib only) and shared prompt templates (`templates/`). Invocation tokens: `/agy:<persona>` on Claude Code, `$agy:<persona>` on Codex, `/skill:agy-<persona>` on Pi, and `/agy-<persona>` on OpenCode. Pi's manifest exposes only `pi-skills/`, generated mechanically from canonical `skills/` via `npm run generate:pi`. Generated skills use `agy-` prefixes, rewrite sibling references, and append `templates/harness-compatibility.md` (directing the host to adapt missing tools to equivalent methods without dropping requirements, or ask for help). Job management (`wait`/`status`/`result`/`cancel`/`continue`/`setup`) lives in `jobs` (`agy-jobs` on Pi and OpenCode) plus the companion CLI — ask for it in natural language ("is the agy job done?").
+Claude Code, Codex, Pi, and OpenCode surface the same personas, backed by one companion script (`companion/agy-companion.mjs`, Node stdlib only) and shared prompt templates (`templates/`). Invocation tokens: `/agy-crew-<persona>` on every harness once installed with `agy-crew install` (Codex lists these as `$agy-crew-<persona>`); through the plugin routes, `/agy-crew:<persona>` on Claude Code, `$agy-crew:<persona>` on Codex, `/skill:agy-crew-<persona>` on Pi, and `/agy-crew-<persona>` on OpenCode. Pi's manifest exposes only `pi-skills/`, generated mechanically from canonical `skills/` via `npm run generate:pi`. Generated skills use `agy-crew-` prefixes, rewrite sibling references, and append `templates/harness-compatibility.md` (directing the host to adapt missing tools to equivalent methods without dropping requirements, or ask for help). Job management (`wait`/`status`/`result`/`cancel`/`continue`/`setup`) lives in `jobs` (`agy-crew-jobs` on Pi and OpenCode) plus the companion CLI — ask for it in natural language ("is the agy job done?").
 
 ## The two-profile permission model
 
@@ -76,7 +76,7 @@ The default optimizes for the common case: your own code on your own machine. Un
 Two properties of these rules you should know before applying them:
 
 - **It allows broad commands with a small deny list.** Setup keeps `command(git)` / `command(gh)` and adds deny prefixes for `git push`, `git reset --hard`, `git clean`, `gh pr merge` and `gh release delete`. [AGY evaluates deny before ask before allow](https://www.antigravity.google/docs/cli/permissions/); the companion only installs configuration, with no command parser or per-task allowlist. Existing allow/deny/ask rules are preserved. Applying setup to an earlier narrow configuration adds the broad grants shown in its dry run. These prefixes prevent common mistakes, not all irreversible actions: other argument arrangements, aliases, scripts, APIs and other allowed commands are not comprehensively covered. The setup is not a read-only boundary. A denied operation stays denied even if requested in the task; change the settings explicitly when needed.
-- **It is global.** The file is `~/.gemini/antigravity-cli/settings.json`, so the rules apply to every `agy` run on the machine, not only to agy-staff jobs. That is the intended product path ("set up once, use everywhere").
+- **It is global.** The file is `~/.gemini/antigravity-cli/settings.json`, so the rules apply to every `agy` run on the machine, not only to agy-crew jobs. That is the intended product path ("set up once, use everywhere").
 
 Web search is not in the allowlist and does not need to be: on the tested agy (v1.1.13) `search_web` runs headless without an allow rule.
 
@@ -89,10 +89,10 @@ setup --restrict review,research   # these modes default to restricted in this r
 setup --restrict none              # back to the built-in defaults
 ```
 
-The policy is written to `<repo>/.agy-staff/config.json` and applied automatically (the run prints a note that the profile came from the project policy). Three properties:
+The policy is written to `<repo>/.agy-crew/config.json` and applied automatically (the run prints a note that the profile came from the project policy). Three properties:
 
 - **Precedence.** Explicit `--restricted`/`--unrestricted` flags override the policy. Continuations without an explicit override inherit their recorded profile; new tasks use the repository policy or built-in defaults. `ask` is tool-free and always restricted.
-- **Scope.** `.agy-staff/` is normally git-ignored, so the policy is a personal, per-machine preference — it is not shared with your team through the repo.
+- **Scope.** `.agy-crew/` is normally git-ignored, so the policy is a personal, per-machine preference — it is not shared with your team through the repo.
 - **What it is not.** This is a run policy for consistency and accident prevention, not a security boundary: it feeds the same `--restricted` machinery, with the same caveats (needs the global allowlist, prefix-matched, some tools ignore allow-rules headless). For genuinely untrusted input, use an isolated checkout.
 
 Note the two files are different things: the **allow/deny rules** (what a restricted agy may execute) is global by agy's design; the **policy** (which modes default to restricted) is per-repo by ours.
@@ -101,7 +101,7 @@ Note the two files are different things: the **allow/deny rules** (what a restri
 
 If a machine-wide allowlist is too broad for you, agy also supports project-scoped permission rules (it treats them as highest priority) tied to its `--project` system. That would let you grant the evidence rules only inside the repos where you delegate.
 
-Caveat, stated plainly: **the exact project-settings file path is undocumented and unverified against the current agy release**, so agy-staff does not write it and this document does not guess it. If you want project scoping, check `agy` interactively for where it reads project-level rules from, and configure it yourself. Until then, either accept the global scope or skip setup entirely — the default unrestricted profile bypasses agy's permission system rather than depending on it, and `ask` needs no allowlist at all; skipping setup only costs you the ability to harden a run with `--restricted`.
+Caveat, stated plainly: **the exact project-settings file path is undocumented and unverified against the current agy release**, so agy-crew does not write it and this document does not guess it. If you want project scoping, check `agy` interactively for where it reads project-level rules from, and configure it yourself. Until then, either accept the global scope or skip setup entirely — the default unrestricted profile bypasses agy's permission system rather than depending on it, and `ask` needs no allowlist at all; skipping setup only costs you the ability to harden a run with `--restricted`.
 
 ## Flags (uniform across modes)
 
@@ -123,7 +123,7 @@ That table is the whole public surface. There is no flag for execution style —
 
 ## Task text
 
-This section is about the **companion CLI**, not about how you invoke a persona. You type your task as plain text after the slash command (`/agy:reviewer Review PR #730`); the skill reads it and composes the `--prompt` call below. You never type `--prompt` yourself.
+This section is about the **companion CLI**, not about how you invoke a persona. You type your task as plain text after the slash command (`/agy-crew:reviewer Review PR #730`); the skill reads it and composes the `--prompt` call below. You never type `--prompt` yourself.
 
 Every run command (`staffer`, `research`, `review`, `implement`, `ask`, `continue`) takes its task from **exactly one** of three sources:
 
@@ -160,7 +160,7 @@ The review template itself is a neutral skeleton (reviewer stance, evidence disc
 
 ## State and background jobs
 
-**Output split.** stdout carries the result and any guard warning about the working tree; the `[agy-staff]` telemetry line (mode, profile, model, duration, tokens, conversation id) goes to stderr, and for background jobs into `jobs/<id>.log`. Telemetry is metadata for the calling agent — it is not part of the deliverable and is not stored in `jobs/<id>.result.md`.
+**Output split.** stdout carries the result and any guard warning about the working tree; the `[agy-crew]` telemetry line (mode, profile, model, duration, tokens, conversation id) goes to stderr, and for background jobs into `jobs/<id>.log`. Telemetry is metadata for the calling agent — it is not part of the deliverable and is not stored in `jobs/<id>.result.md`.
 
 `staffer`, `research`, `review` and `implement` return stable job handles promptly. Default flow: prepare the prompt, dispatch, wait for the final result, then validate as needed. While running, do not proactively observe, read logs or inspect intermediate artifacts, including for routine updates. Observe progress only when the user explicitly asks; diagnose after a failure or a result requiring intervention. Each detached worker continuously drains AGY `stream-json`, even with no observers. There is no additional daemon or scheduler.
 
@@ -181,13 +181,13 @@ Wait is silent until completion or soft expiry. Only an explicit user progress q
 
 Use one independent background wait per job where the harness supports it, never serialize multiple jobs in one shell. Otherwise use the longest practical wait within the host's tool-call limit. Completion ends an outstanding wait, but the outer harness controls when the model receives it. Bash + skills cannot universally wake an idle model; a timer instruction alone does not schedule another invocation.
 
-Per-repository state lives in `<repo>/.agy-staff/`. `state.json` stores conversations, configuration history indexed by conversation ID (including foreground ask), and lifecycle records, protected by short write transactions; observation reads remain read-only. `config.json` holds optional permission policy. Each job has a spec, diagnostic log, result, final status sidecar, raw stdout (`.events.jsonl`) and atomically published bounded snapshot (`.progress.json`). Raw records may include unknown/malformed events. Missing activity files on legacy jobs yield a status-only snapshot.
+Per-repository state lives in `<repo>/.agy-crew/`. `state.json` stores conversations, configuration history indexed by conversation ID (including foreground ask), and lifecycle records, protected by short write transactions; observation reads remain read-only. `config.json` holds optional permission policy. Each job has a spec, diagnostic log, result, final status sidecar, raw stdout (`.events.jsonl`) and atomically published bounded snapshot (`.progress.json`). Raw records may include unknown/malformed events. Missing activity files on legacy jobs yield a status-only snapshot.
 
 After warning-free success, results and metadata become durable before the raw stream/snapshot are deleted. Failures, cancellation, hard timeout and warning results retain intermediates. Results, diagnostic logs, conversation metadata and AGY's own conversation storage are retained. Readers racing with cleanup recheck terminal state: observe returns terminal metadata; wait returns the result. Observe never reads result-file contents, even after successful intermediates have been deleted. Crash-without-result reports include dispatch/worker-start evidence, process IDs, log existence/size and next-inspection/recovery commands without copying prompts or environment values.
 
-### Keeping `.agy-staff/` out of git
+### Keeping `.agy-crew/` out of git
 
-Automatic since 0.4: when the companion creates `.agy-staff/` for the first time in a repo, it appends `.agy-staff/` to `.git/info/exclude` (repo-local, untracked) unless the path is already ignored. It never touches the tracked `.gitignore` — the state directory is local scratch, and adding it to a shared, committed file would change the repo for everyone else.
+Automatic since 0.4: when the companion creates `.agy-crew/` for the first time in a repo, it appends `.agy-crew/` to `.git/info/exclude` (repo-local, untracked) unless the path is already ignored. It never touches the tracked `.gitignore` — the state directory is local scratch, and adding it to a shared, committed file would change the repo for everyone else.
 
 ## Troubleshooting
 
@@ -202,6 +202,8 @@ Automatic since 0.4: when the companion creates `.agy-staff/` for the first time
 - **"agy modified the working tree during this review"** — an unrestricted `research`/`review` run changed files it was asked to preserve. Inspect the listed paths to identify changes from this run before deciding what to revert, preserving pre-existing user work.
 - **Project-scoped agy permissions** — agy has project-level rules ("highest priority") tied to its `--project` system; the settings-file path for those is undocumented and unverified, so setup only edits the global file. If a rule seems ignored, check agy interactively. See [Advanced: project-scoped permissions](#advanced-project-scoped-permissions).
 - **Rules context** — agy auto-loads `AGENTS.md`/`GEMINI.md`/`.agents/rules/*.md` from the workspace; keep those files sane in repos where you delegate.
+
+The migration sections below are inherited agy-staff history. The `/agy:` names in them belong to the upstream plugin; in agy-crew the same personas are invoked as shown in [Modes and defaults](#modes-and-defaults).
 
 ## Migration from 0.1
 
@@ -222,7 +224,7 @@ Removed flags fail fast with a message naming the replacement. The deprecated pr
 
 ## Migration from 0.3
 
-0.4 consolidated the two invocation layers (commands + skills) into a single skills layer with persona names, added the `staffer` mode, and made `.agy-staff/` hygiene automatic.
+0.4 consolidated the two invocation layers (commands + skills) into a single skills layer with persona names, added the `staffer` mode, and made `.agy-crew/` hygiene automatic.
 
 | 0.3 | 0.4 | Notes |
 |---|---|---|
@@ -257,37 +259,101 @@ Windows is supported on a best-effort basis and exercised by the `Tests (Windows
 
 ## OpenCode
 
-The dependency-free `opencode.mjs` entrypoint implements the OpenCode V1 plugin config hook (verified with 1.18.34). Install the full package with `opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git' --global`, then restart OpenCode and run `/agy-ask reply with OK`. The companion requires Node.js and an authenticated `agy` on PATH. OpenCode V2 is not covered.
+The dependency-free `opencode.mjs` entrypoint implements the OpenCode V1 plugin config hook (verified with 1.18.34). Install the full package with `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global`, then restart OpenCode and run `/agy-crew-ask reply with OK`. The companion requires Node.js and an authenticated `agy` on PATH. OpenCode V2 is not covered.
 
 The native installer adds a package entry to the `plugin` array in the OpenCode config. The equivalent configuration is:
 
 ```json
 {
-  "plugin": ["agy-staff@git+https://github.com/keli-wen/agy-staff.git"]
+  "plugin": ["agy-crew@git+https://github.com/pStrikeZ/agy-crew.git"]
 }
 ```
 
-The plugin appends its absolute bundled `opencode-skills/` directory to `skills.paths`, preserving existing paths and avoiding duplicate registrations. OpenCode discovers seven branded skills and exposes them as same-named slash commands: `/agy-ask`, `/agy-staffer`, `/agy-researcher`, `/agy-reviewer`, `/agy-implementer`, `/agy-jobs`, and `/agy-lead`. No command wrappers are installed. Existing OpenCode skill permissions still apply.
+The plugin appends its absolute bundled `opencode-skills/` directory to `skills.paths`, preserving existing paths and avoiding duplicate registrations. OpenCode discovers seven branded skills and exposes them as same-named slash commands: `/agy-crew-ask`, `/agy-crew-staffer`, `/agy-crew-researcher`, `/agy-crew-reviewer`, `/agy-crew-implementer`, `/agy-crew-jobs`, and `/agy-crew-lead`. No command wrappers are installed. Existing OpenCode skill permissions still apply.
 
 `npm run generate:opencode` generates these entrypoints from canonical `skills/`, copying all assets, rewriting invocation syntax and sibling paths, and appending the same host compatibility context as Pi. The companion and prompt templates remain shared. Install the whole package; copying only the plugin file would lose its relative resources.
 
-For local development, run `opencode plugin /absolute/path/to/checkout --global`, generate skills with `npm run generate:skills`, and restart OpenCode. This reads the checkout directly. For Git installs, OpenCode 1.18.34 caches by the full package spec; restart or `--force` alone does not refresh an unchanged spec. Upgrade by choosing a newer tag or commit and running `opencode plugin 'agy-staff@git+https://github.com/keli-wen/agy-staff.git#<tag-or-commit>' --global --force`, then restart. The selected ref must contain this adapter. `--force` replaces the configured plugin entry; changing the ref gives the new install a distinct cache key.
+For local development, run `opencode plugin /absolute/path/to/checkout --global`, generate skills with `npm run generate:skills`, and restart OpenCode. This reads the checkout directly. For Git installs, OpenCode 1.18.34 caches by the full package spec; restart or `--force` alone does not refresh an unchanged spec. Upgrade by choosing a newer tag or commit and running `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`, then restart. The selected ref must contain this adapter. `--force` replaces the configured plugin entry; changing the ref gives the new install a distinct cache key.
+
+## Install command
+
+`agy-crew install` is the terminal route to installing the skills. It renders them once into a shared bundle and links that bundle into every harness it finds, instead of each harness keeping its own plugin cache. Requirements: Node.js 20+ and a working `agy` on PATH (`agy --version`).
+
+```bash
+npm install -g github:pStrikeZ/agy-crew
+agy-crew install
+```
+
+From a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
+
+### Commands and flags
+
+| Command | Effect |
+|---|---|
+| `agy-crew install` | Detect the harnesses present (by their config directories) and install into each |
+| `agy-crew install --hosts claude,codex,omp,opencode,dsh` | Install into an explicit list instead of auto-detecting |
+| `agy-crew install --all` | Install into every supported host |
+| `agy-crew install --dry-run` | Print the plan; write nothing |
+| `agy-crew install --status` | Show per-host link state and bundles |
+| `agy-crew install --json` | Machine-readable output (combine with any of the above) |
+| `agy-crew uninstall [--hosts …\|--all]` | Remove only the links the installer created |
+
+### Hosts
+
+| Host (`--hosts` id) | Skills directory |
+|---|---|
+| Claude Code (`claude`) | `~/.claude/skills` |
+| Codex (`codex`) | `~/.agents/skills` |
+| Oh My Pi (`omp`) | `~/.omp/agent/skills` |
+| OpenCode (`opencode`) | `~/.config/opencode/skills` |
+| DeepSeek Harness (`dsh`) | `~/.dsh/skills` |
+
+Pi is not covered by `install`; use the Pi package route (`pi install git:github.com/pStrikeZ/agy-crew`).
+
+### Mechanics
+
+The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths. Each harness gets one directory link per persona (`agy-crew-<persona>`, for example `agy-crew-staffer`) pointing into that bundle; on Windows the link is a junction, which needs no elevation. The global directory `~/.agy-crew/` can be moved with the `AGY_CREW_HOME` environment variable.
+
+User-level skills are invoked as `/agy-crew-staffer` on every harness (Codex lists them as `$agy-crew-staffer`). Restart the harness or open a new session afterwards; smoke test with `/agy-crew-ask reply with OK`. The `ask` persona runs no tools and needs no permission setup.
+
+### Conflict policy
+
+Anything in a skills directory that the installer did not create is user content and is never overwritten. Any conflict aborts the whole run before anything is written (all-or-nothing) and prints the offending paths together with a remedy. `uninstall` likewise removes only links it created.
+
+### Mutual exclusion with agy-staff
+
+agy-crew and the upstream [agy-staff](https://github.com/keli-wen/agy-staff) must not be installed on the same machine: the skills would appear twice to the agent, and both companions would write the same per-repository state. `agy-crew install` refuses to run when it finds agy-staff and says how to remove it:
+
+- **Claude Code** — `claude plugin uninstall agy@agy-staff`
+- **Codex** — remove the agy-staff plugin, then restart Codex
+- **OpenCode** — remove the `agy-staff@…` entry from the `plugin` array in `opencode.json`
+- **Pi** — uninstall the agy-staff package
+- **Any harness** — remove upstream flat skills (`agy-ask`, `agy-jobs`, …) from the skills directory
+
+To get upstream back later, run `agy-crew uninstall --all` first.
+
+### Permission setup
+
+`setup` is unchanged in 0.8.0: it still edits the global `~/.gemini/antigravity-cli/settings.json`. The per-repository policy file is `.agy-crew/config.json`.
 
 ## Upgrading
 
-Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-staff/agy/0.4.0`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
+Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.8.0`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
 
-- **Claude Code** — `claude plugin marketplace update agy-staff` refreshes the marketplace clone, then `claude plugin update agy@agy-staff` re-copies it into the cache. `install` is **not** the upgrade command: on an already-installed plugin it answers "already installed" and does nothing, whatever the version. And `update` only moves if the version string changed — on an unchanged version it answers "already at the latest version" and leaves the old commit in place. Force the current commit in with `claude plugin uninstall agy@agy-staff && claude plugin install agy@agy-staff`. Restart Claude Code afterwards either way — skills are registered at session start.
+- **Terminal command (`agy-crew install`)** — for an npm install, run `npm install -g github:pStrikeZ/agy-crew` again, then `agy-crew install` to render a fresh bundle and re-link; restart the harness. For a checkout, `git pull` is live at once for the source, and `agy-crew install` refreshes the bundle. See [Install command](#install-command).
+- **Claude Code** — `claude plugin marketplace update agy-crew` refreshes the marketplace clone, then `claude plugin update agy-crew@agy-crew` re-copies it into the cache. `install` is **not** the upgrade command: on an already-installed plugin it answers "already installed" and does nothing, whatever the version. And `update` only moves if the version string changed — on an unchanged version it answers "already at the latest version" and leaves the old commit in place. Force the current commit in with `claude plugin uninstall agy-crew@agy-crew && claude plugin install agy-crew@agy-crew`. Restart Claude Code afterwards either way — skills are registered at session start.
 - **Codex** — bump the version, run `codex plugin marketplace upgrade` (or remove and re-add the marketplace entry), then restart the app.
 - **OpenCode** — use a newer Git tag/commit in the native plugin installer with `--force`, then restart; see [OpenCode](#opencode).
-- **Pi** — for an unpinned Git install, run `pi update --extension git:github.com/keli-wen/agy-staff`, then `/reload`. For local development, regenerate Pi skills (`npm run generate:pi`) and run `/reload`; no push is needed.
+- **Pi** — for an unpinned Git install, run `pi update --extension git:github.com/pStrikeZ/agy-crew`, then `/reload`. For local development, regenerate Pi skills (`npm run generate:pi`) and run `/reload`; no push is needed.
 
-You can check which commit is actually installed: the `gitCommitSha` in `~/.claude/plugins/installed_plugins.json`, versus `git -C ~/.claude/plugins/marketplaces/agy-staff log -1` for what the marketplace clone has fetched.
+You can check which commit is actually installed: the `gitCommitSha` in `~/.claude/plugins/installed_plugins.json`, versus `git -C ~/.claude/plugins/marketplaces/agy-crew log -1` for what the marketplace clone has fetched.
 
 ## Repository layout
 
 ```
 companion/agy-companion.mjs    command entrypoint, modes, job management and setup
+companion/identity.mjs         product identity constants (names, prefixes, state directories, AGY_CREW_HOME)
+companion/install.mjs          cross-harness installer behind `agy-crew install` / `uninstall`
 companion/stream-worker.mjs    streaming execution, process cleanup and deadlines
 companion/observation.mjs      event parsing, progress snapshots and output budgets
 companion/state-lock.mjs       state-write locking and stale-lock recovery
