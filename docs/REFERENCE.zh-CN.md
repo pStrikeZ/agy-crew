@@ -562,7 +562,7 @@ agy-crew 与上游 [agy-staff](https://github.com/keli-wen/agy-staff) 不能安�
 
 ## 升级
 
-Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.2`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
+Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.3`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
 
 ### 终端命令（`agy-crew install`）
 
