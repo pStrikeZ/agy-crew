@@ -234,7 +234,7 @@ export async function stopExecution(root, known = [], table = processTable) {
   signal(table(), 'SIGKILL');
 }
 
-export async function runStreaming({ binary, args, job, budget, signal, update, conversation }) {
+export async function runStreaming({ binary, args, job, budget, signal, update, conversation, env }) {
   const hardDeadline = Date.now() + Math.max(0, budget);
   const rawFd = fs.openSync(job.events_file, 'a');
   const projection = createProjection(conversation);
@@ -286,6 +286,8 @@ export async function runStreaming({ binary, args, job, budget, signal, update, 
       detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // undefined inherits the process environment; pool accounts pass a private HOME
+      env,
     });
     const exited = new Promise((resolve) => {
       child.once('error', (error) => { spawnError = error; resolve({ exit: null, killedSignal: null }); });

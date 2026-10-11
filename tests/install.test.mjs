@@ -7,7 +7,7 @@ import { sandbox, run, COMPANION, FAKE_AGY } from './helpers.mjs';
 import { generateSkills, ROOT } from '../scripts/generate-skills.mjs';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-const PERSONAS = ['ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
+const PERSONAS = ['accounts', 'ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
 const HOST_DIRS = {
   claude: ['.claude', 'skills'],
   codex: ['.agents', 'skills'],
@@ -60,7 +60,7 @@ test('claude present: links, bundle content, repeat run, json, and running the i
   // Outside any git repository, from a directory that is not the sandbox repo.
   const first = spawnSyncInstall(sb, ['--hosts', 'claude']);
   assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /claude\s+7 created/);
+  assert.match(first.stdout, /claude\s+8 created/);
   assert.match(first.stdout, /Smoke test: \/agy-crew-ask reply with OK/);
 
   const dir = skillsDir(sb, 'claude');
@@ -106,7 +106,7 @@ test('claude present: links, bundle content, repeat run, json, and running the i
 
   const second = install(sb, ['--hosts', 'claude']);
   assert.equal(second.code, 0, second.stderr);
-  assert.match(second.stdout, /claude\s+7 unchanged/);
+  assert.match(second.stdout, /claude\s+8 unchanged/);
   assert.deepEqual(fs.readdirSync(bundlesDir(sb)), bundleNames);
 
   const json = JSON.parse(install(sb, ['--hosts', 'claude', '--json']).stdout);
@@ -136,7 +136,7 @@ test('--all, --status and uninstall --all keep user content', () => {
   const r = install(sb, ['--all']);
   assert.equal(r.code, 0, r.stderr);
   for (const host of Object.keys(HOST_DIRS)) {
-    assert.equal(fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')).length, 7, host);
+    assert.equal(fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')).length, 8, host);
   }
 
   const status = JSON.parse(install(sb, ['--status', '--json']).stdout);
@@ -145,12 +145,12 @@ test('--all, --status and uninstall --all keep user content', () => {
   assert.equal(status.bundles.filter(b => b.current).length, 1);
   const text = install(sb, ['--status']);
   assert.equal(text.code, 0);
-  assert.equal((text.stdout.match(/managed-current/g) || []).length, 35);
+  assert.equal((text.stdout.match(/managed-current/g) || []).length, 40);
   assert.match(text.stdout, /\(current\)/);
 
   const u = run(sb, ['uninstall', '--all'], env(sb));
   assert.equal(u.code, 0, u.stderr);
-  assert.equal((u.stdout.match(/7 removed/g) || []).length, 5);
+  assert.equal((u.stdout.match(/8 removed/g) || []).length, 5);
   for (const host of Object.keys(HOST_DIRS)) {
     const left = fs.existsSync(skillsDir(sb, host)) ? fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')) : [];
     assert.deepEqual(left, [], host);
@@ -213,7 +213,7 @@ test('stale managed link is updated and the old bundle pruned', () => {
 
   const r = install(sb);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /claude\s+6 created, 1 updated/);
+  assert.match(r.stdout, /claude\s+7 created, 1 updated/);
   assert.ok(!fs.readlinkSync(link).includes('deadbeefcafe'));
   assert.ok(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8').includes('agy-crew-ask'));
   assert.equal(fs.existsSync(path.join(bundlesDir(sb), '0.0.1-deadbeefcafe')), false);

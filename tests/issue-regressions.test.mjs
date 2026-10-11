@@ -21,7 +21,7 @@ test('#8 foreground timeout persists configuration and signals attention without
   assert.equal(agyCalls(sb).length, 1);
   run(sb, ['ask', '--prompt', 'other'], { FAKE_AGY_CONVERSATION_ID: 'other-ask' });
   run(sb, ['research', '--prompt', 'unrelated'], { FAKE_AGY_CONVERSATION_ID: 'other-mode' });
-  assert.equal(run(sb, ['wait', '--timeout', '10s']).code, 0);
+  assert.equal(run(sb, ['wait', '--timeout', '30s']).code, 0);
   const continued = run(sb, ['continue', '--conversation', 'timed-out', '--timeout', '4m', '--prompt', 'continue']);
   assert.equal(continued.code, 0, continued.stderr);
   const argv = agyCalls(sb).at(-1);

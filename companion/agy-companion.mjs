@@ -34,6 +34,8 @@
  *                                   or coexist with upstream agy-staff
  *   uninstall [--hosts a,b | --all] [--json]
  *                                   remove only the links install created
+ *   accounts <list|login|import|remove|enable|disable|cooldown clear|quota>
+ *                                   manage the pool of private agy logins
  *   _worker <job-id>                (internal) background job executor
  *
  * Uniform flags:
@@ -42,6 +44,8 @@
  *   --continue            reuse the last conversation id for this mode
  *   --model <id>          explicit agy model id (overrides --effort)
  *   --effort <l|m|h>      low|medium|high → gemini-3.8-flash-<effort>
+ *   --account <a>         auto (default) | live | <pool account name>; with an empty
+ *                         pool every run uses your own (live) agy login
  *   --restricted          hardening opt-in: keep agy's permission enforcement
  *                         on (wants setup's evidence-gathering allowlist)
  *   --unrestricted        pass --dangerously-skip-permissions (already the
@@ -105,6 +109,10 @@ import { cmdInstall, cmdUninstall } from './install.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
+import { cmdAccounts, poolSettingsFiles } from './accounts.mjs';
+import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
+import { classifyFailureText, modelFamily } from './pool/results.mjs';
+import { loadPool, updatePool, poolExists } from './pool/state.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const TEMPLATES_DIR = path.join(path.dirname(SELF), '..', 'templates');
@@ -400,7 +408,7 @@ function finishJob(id, output, fields) {
   });
 }
 
-function rememberConversation(resolved, id, jobId) {
+function rememberConversation(resolved, id, jobId, account = null) {
   if (!id) return;
   updateState((state) => {
     state.conversations ||= {};
@@ -408,9 +416,20 @@ function rememberConversation(resolved, id, jobId) {
     state.last = { mode: resolved.mode, id, model: resolved.model, profile: resolved.profile };
     state.conversation_configs ||= {};
     state.conversation_configs[id] = { mode: resolved.mode, model: resolved.model,
-      profile: resolved.profile, cwd: process.cwd() };
+      profile: resolved.profile, cwd: process.cwd(), ...(account ? { account } : {}) };
     const job = state.jobs?.find((j) => j.id === jobId);
     if (job) job.conversation_id = id;
+  });
+  bindConversation(id, account);
+}
+
+/** A conversation lives in one account's HOME, so it is bound to that account
+ *  the first time its id is seen. live conversations stay unbound (unbound
+ *  means live). */
+function bindConversation(id, account) {
+  if (!account || account === 'live') return;
+  updatePool((pool) => {
+    pool.conversations[id] ||= { account, recorded_at: new Date().toISOString() };
   });
 }
 
@@ -424,8 +443,8 @@ function pidAlive(pid) {
   }
 }
 
-const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts']);
-const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status']);
+const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts', 'account', 'family', 'home']);
+const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh']);
 
 // Flags dropped in 0.2. They get their own error instead of falling through to
 // "unknown flag", so a 0.1 caller learns what replaced them.
@@ -739,6 +758,7 @@ function runAgy(invoke) {
     maxBuffer: 64 * 1024 * 1024,
     timeout: budget,
     windowsHide: true,
+    env: invoke.env, // undefined inherits; pool accounts pass a private HOME
   });
   if (r.error && r.error.code === 'ETIMEDOUT') {
     die(`agy timed out: no result within ${timeout} plus 60s grace. Retry with a larger --timeout, or narrow the task.`);
@@ -784,6 +804,9 @@ function runAgy(invoke) {
         'agy cannot run inside a sandbox — it needs a localhost port and its OAuth token file, which sandboxes typically hide. ' +
         'Run this companion command unsandboxed: in Codex, grant the workspace full access or approve the command with escalated permissions.';
     }
+    // A quota or auth failure is classified by executeRun before anything is
+    // printed; it re-raises through die() when no pool account handles it.
+    if (classifyFailureText(errText)) throw Object.assign(new Error(msg), { deferredDie: true, diagnosticText: errText });
     die(msg);
   }
   return { payload, stderr, exit: r.status ?? 0 };
@@ -904,6 +927,15 @@ function refuseRunningFollowUp(state, conversation, jobId = null) {
 // run (research / review / implement / continue)
 // ---------------------------------------------------------------------------
 
+const ACCOUNT_REQUEST_RE = /^(auto|live|[a-z0-9][a-z0-9._-]{0,31})$/;
+
+/** --account <auto|live|name>, defaulting to AGY_CREW_ACCOUNT, then auto. */
+function accountRequest(opts) {
+  const value = opts.account || process.env.AGY_CREW_ACCOUNT || 'auto';
+  if (!ACCOUNT_REQUEST_RE.test(value)) die(`invalid --account "${value}": use auto, live, or a pool account name (see \`accounts list\`)`);
+  return value;
+}
+
 function resolveRun(mode, opts, priorJob = null) {
   // likely a typo for --restricted; --restrict (per-repo policy) belongs to setup
   if (opts.restrict !== undefined) {
@@ -970,7 +1002,8 @@ function resolveRun(mode, opts, priorJob = null) {
     if (!opts.restricted && !opts.unrestricted && prior.profile) { profile = prior.profile; profileSource = 'inherited'; }
   }
   if (profileSource === 'project') process.stderr.write(`${PRODUCT}: profile=${profile} set by project policy (${configPath()})\n`);
-  return { mode, model, profile, profileSource, background, timeout, conversation, parentJobId: prior?.id || null, originalCwd: prior?.cwd || null };
+  return { mode, model, profile, profileSource, background, timeout, conversation, parentJobId: prior?.id || null, originalCwd: prior?.cwd || null,
+    account_request: accountRequest(opts) };
 }
 
 /** Task text comes from exactly one source: --prompt, --prompt-file, or
@@ -1127,6 +1160,119 @@ function treeDeltaReport(mode, before, after) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// account pool: acquire -> run -> classify -> fail over or loan
+// ---------------------------------------------------------------------------
+
+const MAX_POOL_RETRIES = 3;
+const QUOTA_CONTINUE_PROMPT = 'Your previous turn stopped because the account hit a quota limit. ' +
+  'Continue the same task from where you stopped; do not repeat finished steps.';
+
+/** With an empty pool and no --account the run is plain live, and stays silent
+ *  about accounts exactly as it did before the pool existed. */
+const showsAccount = (held, resolved) => !!held && (held.pooled || resolved.account_request === 'live');
+
+function accountTelemetry(held, resolved) {
+  if (!showsAccount(held, resolved)) return '';
+  return ` account=${held.account}${held.lender ? ` credential=${held.lender}` : ''}`;
+}
+
+/** Re-raise an agy failure that runAgy deferred so the pool could look at it. */
+function rethrow(error) {
+  if (error.deferredDie) die(error.message);
+  throw error;
+}
+
+function resultFailure({ payload, stderr, exit }) {
+  const status = (payload.status || '').toUpperCase();
+  if ((payload.response || '').trim() || ((!status || status === 'SUCCESS') && exit === 0)) return null;
+  const text = `${payload.error || ''}\n${stderr || ''}`;
+  const kind = classifyFailureText(text);
+  return kind ? { kind, text } : null;
+}
+
+/** One agy call. A quota/auth failure comes back as data in both shapes agy
+ *  reports it (an ERROR payload, or a thrown error carrying the raw output);
+ *  anything else behaves exactly as before. */
+async function invokeOnce(invoke, execution) {
+  let result;
+  try {
+    result = execution ? await execution(invoke) : runAgy(invoke);
+  } catch (error) {
+    const text = `${error.message}\n${error.diagnosticText || ''}`;
+    const kind = error.reason === 'canceled' ? null : classifyFailureText(text);
+    if (!kind) throw error;
+    return { error, failure: { kind, text } };
+  }
+  return { result, failure: resultFailure(result) };
+}
+
+function quotaFailure(resolved, opts, { message, retry_at, conversation }) {
+  const when = retry_at || 'the account quota resets';
+  const recovery = conversation
+    ? `continue ${opts.jobId ? `--job ${opts.jobId}` : `--conversation ${conversation}`} after ${when}; ` +
+      'when another pool account is idle, a credential loan is used automatically'
+    : `start a new run after ${when}, pass --account live, or choose another model family`;
+  const text = `${message}\n${recovery}`;
+  if (resolved.background) throw Object.assign(new Error(text), { reason: 'quota_exhausted', retry_at: retry_at || null, recovery });
+  die(`${text}\n${JSON.stringify({ status: conversation ? 'attention' : 'error', reason: 'quota_exhausted',
+    retry_at: retry_at || null, conversation_id: conversation || null, recovery }, null, 2)}`, conversation ? 5 : 1);
+}
+
+function latestConversation(jobId) {
+  return jobId ? loadState().jobs?.find((j) => j.id === jobId)?.conversation_id || null : null;
+}
+
+/** Run agy on a pool account chosen under a lease. A quota failure records a
+ *  cooldown and then either fails over to another account (nothing started
+ *  yet) or continues the bound conversation on a borrowed credential. */
+async function runWithPool(resolved, invoke, opts, execution) {
+  const family = modelFamily(resolved.model);
+  for (let retries = 0; ; retries++) {
+    const got = acquireRun({ requested: resolved.account_request, family, conversation: invoke.conversation, jobId: opts.jobId });
+    if (got.error) {
+      if (got.error.reason !== 'quota_exhausted') die(got.error.message);
+      quotaFailure(resolved, opts, { ...got.error, conversation: invoke.conversation });
+    }
+    const held = got.held;
+    const shown = showsAccount(held, resolved);
+    invoke.env = held.env;
+    invoke.recordAs = shown ? held.account : null;
+    if (shown && opts.jobId) updateJob(opts.jobId, { account: held.account, ...(held.lender ? { credential_from: held.lender } : {}) });
+
+    let attempt;
+    try {
+      attempt = await invokeOnce(invoke, execution);
+      if (attempt.result) rememberConversation(resolved, attempt.result.payload.conversation_id, opts.jobId, invoke.recordAs);
+    } finally {
+      held.release();
+    }
+    const { result, error, failure } = attempt;
+    if (!failure || held.account === 'live') {
+      if (error) rethrow(error);
+      return { result, held };
+    }
+    const credit = held.lender || held.account; // the credential that made the request
+    if (failure.kind === 'authentication_failed') {
+      markAuthError(credit, failure.text);
+      if (error) rethrow(error);
+      return { result, held }; // triage reports it with its usual message
+    }
+    const cooldown = recordCooldown(credit, family, failure.text, opts.jobId);
+    const conversation = result?.payload?.conversation_id || latestConversation(opts.jobId) || invoke.conversation;
+    if (retries < MAX_POOL_RETRIES) {
+      if (!conversation && held.auto) continue; // nothing started: just pick another account
+      if (conversation && boundAccount(loadPool(), conversation) !== 'live') {
+        invoke.conversation = conversation; // the next acquire finds the account cooling and borrows a credential
+        invoke.prompt = QUOTA_CONTINUE_PROMPT;
+        continue;
+      }
+    }
+    quotaFailure(resolved, opts, { conversation, retry_at: cooldown.retry_at,
+      message: `agy account "${credit}" hit a ${family} quota limit (quota_exhausted).` });
+  }
+}
+
 async function executeRun(resolved, prompt, opts, execution = null) {
   const workspaceBefore = resolved.mode === 'ask' ? null : porcelainSnapshot();
   const implementBefore = implementGuardApplies(resolved) ? workspaceBefore : null;
@@ -1141,10 +1287,9 @@ async function executeRun(resolved, prompt, opts, execution = null) {
     unrestricted: resolved.profile === 'unrestricted',
     jsonSchema: opts.json && resolved.mode === 'review' ? REVIEW_JSON_SCHEMA : null,
   };
-  let result, response;
+  let result, response, held;
   try {
-    result = execution ? await execution(invoke) : runAgy(invoke);
-    rememberConversation(resolved, result.payload.conversation_id, opts.jobId);
+    ({ result, held } = await runWithPool(resolved, invoke, opts, execution));
     response = triageResult(result, resolved.mode, resolved.profile, resolved.profileSource, resolved.model);
   } catch (error) {
     error.workspace = {
@@ -1171,7 +1316,7 @@ async function executeRun(resolved, prompt, opts, execution = null) {
   // background workers have stdout and stderr both wired to jobs/<id>.log, so
   // it lands there as the job's provenance record.
   process.stderr.write(
-    `[${PRODUCT}] mode=${resolved.mode} profile=${resolved.profile} model=${resolved.model} ` +
+    `[${PRODUCT}] mode=${resolved.mode} profile=${resolved.profile} model=${resolved.model}${accountTelemetry(held, resolved)} ` +
       `agy_status=${payload.status || 'unknown'} agy_exit=${result.exit} ` +
       `duration=${payload.duration_seconds ?? '?'}s turns=${payload.num_turns ?? '?'} tokens(${fmtTokens(payload.usage)})\n` +
       `conversation: ${payload.conversation_id || 'unknown'} (follow up with --continue)\n`
@@ -1198,8 +1343,17 @@ function cmdRun(mode, opts) {
   return dispatch(resolved, prompt, { ...opts, promptSource: { kind: 'template', task } });
 }
 
+/** Fail fast (before a background job is registered) on an account request
+ *  that can never work: unknown or disabled name, or a conversation owned by
+ *  another account. Quota problems are left to the run itself. */
+function preflightAccount(resolved) {
+  const problem = preflight({ requested: resolved.account_request, family: modelFamily(resolved.model), conversation: resolved.conversation });
+  if (problem && problem.reason !== 'quota_exhausted') die(problem.message);
+}
+
 async function dispatch(resolved, prompt, opts) {
   const mode = resolved.mode;
+  preflightAccount(resolved);
   if (!resolved.background) {
     process.stdout.write(await executeRun(resolved, prompt, opts) + '\n');
     return;
@@ -1293,8 +1447,9 @@ async function workerMain(jobId) {
       const agy = agyCommand(agyArgs(invoke, 'stream-json'));
       return runStreaming({ binary: agy.cmd, args: agy.args, job,
         budget: durationToMs(spec.resolved.timeout) - (Date.now() - started), signal: controller.signal,
+        env: invoke.env,
         update: (fields) => updateJob(jobId, fields),
-        conversation: (id) => rememberConversation(spec.resolved, id, jobId),
+        conversation: (id) => rememberConversation(spec.resolved, id, jobId, invoke.recordAs),
       }).catch((error) => {
         if (error.reason === 'missing_result' && isUnsupportedModelError(error.diagnosticText || '')) {
           handleUnsupportedModel({ requestedModel: invoke.model, errText: error.diagnosticText, originalError: error.diagnosticText });
@@ -1316,12 +1471,12 @@ async function workerMain(jobId) {
     if (!job) throw error;
     const reason = job.cancel_requested_at ? 'canceled' : error.reason || 'agy_error';
     const status = job.status === 'canceled' || reason === 'canceled' ? 'canceled'
-      : isTimeoutReason(reason) && job.conversation_id ? 'attention' : 'error';
+      : (isTimeoutReason(reason) || reason === 'quota_exhausted') && job.conversation_id ? 'attention' : 'error';
     job = finishJob(jobId, (completed) => {
       const report = { ...diagnosticPacket(completed), result_exists: true, reason: completed.reason,
         workspace: error.workspace, last_snapshot: readObservation(completed) };
       return `${completed.status === 'attention' ? 'Job needs attention' : 'Job failed'}:\n${completed.reason === 'canceled' ? 'Execution canceled.' : error.message}\n\n${JSON.stringify(report, null, 2)}\n`;
-    }, (current) => current.cancel_requested_at ? { status: 'canceled', reason: 'canceled' } : { status, reason });
+    }, (current) => current.cancel_requested_at ? { status: 'canceled', reason: 'canceled' } : { status, reason, ...(error.retry_at ? { retry_at: error.retry_at } : {}) });
     process.exitCode = JOB_EXIT_CODES[job.status] ?? 1;
   } finally {
     clearInterval(cancelTimer);
@@ -1484,6 +1639,17 @@ function timeoutRecovery(job) {
   };
 }
 
+/** Recovery for a job that stopped on an exhausted account quota. */
+function quotaRecovery(job) {
+  const when = job.retry_at || 'the account quota resets';
+  return { retry_at: job.retry_at || null, spec_file: job.spec_file || null,
+    continue: job.conversation_id ? `continue --job ${job.id} --prompt "Continue the task"` : null,
+    restart: `restart ${job.id}`,
+    note: job.conversation_id
+      ? `continue --job ${job.id} after ${when}; when another pool account is idle, a credential loan is used automatically.`
+      : `No conversation was started. Restart after ${when}, pass --account live, or choose another model family.` };
+}
+
 function diagnosticPacket(job) {
   let logBytes = null;
   try { logBytes = fs.statSync(job.log_file).size; } catch {}
@@ -1493,7 +1659,9 @@ function diagnosticPacket(job) {
     log_state: logBytes === null ? 'missing' : logBytes === 0 ? 'empty' : 'present',
     result_exists: fs.existsSync(job.result_file), log_file: job.log_file, events_file: job.events_file || null,
     conversation_id: job.conversation_id || null, model: job.model || null, profile: job.profile || null,
-    recovery: isTimeoutReason(job.reason) ? timeoutRecovery(job) : { inspect: 'git status --short; git diff', spec_file: job.spec_file || null,
+    ...(job.account ? { account: job.account } : {}),
+    ...(job.reason === 'quota_exhausted' ? { retry_at: job.retry_at || null } : {}),
+    recovery: isTimeoutReason(job.reason) ? timeoutRecovery(job) : job.reason === 'quota_exhausted' ? quotaRecovery(job) : { inspect: 'git status --short; git diff', spec_file: job.spec_file || null,
       continue: job.conversation_id ? `continue --job ${job.id} --prompt "Continue after inspecting partial workspace changes"` : null,
       restart: `restart ${job.id}`, note: 'Inspect partial workspace changes first. Recovery creates a linked new job with a fresh budget; nothing is retried automatically.' },
   };
@@ -1524,6 +1692,7 @@ function readTerminalObservation(job, status) {
       summary: status === 'attention' ? 'Timeout with a resumable conversation; ask the user whether to continue.'
         : reason === 'hard_timeout' ? 'Execution stopped at its hard limit.' : `Job ${status}; inspect the retained report and diagnostics.`,
       conversation_id: job.conversation_id || null, model: job.model || null, profile: job.profile || null,
+      ...(job.account ? { account: job.account } : {}),
       worker_started_at: job.worker_started_at || null, pid: job.pid, agy_pid: job.agy_pid || null,
       log_state: packet.log_state, log_bytes: packet.log_bytes,
       details: { diagnostics: job.log_file, raw_output: job.events_file || null, snapshot: job.progress_file || null },
@@ -1689,7 +1858,9 @@ function cmdRestart(opts) {
   if (!job.spec_file) die('this legacy job has no stored restart specification');
   const spec = JSON.parse(fs.readFileSync(job.spec_file, 'utf8'));
   enterOriginalWorkspace(spec.cwd);
-  const resolved = { ...spec.resolved, conversation: null, timeout: DEFAULTS.timeout[job.mode] };
+  // A fresh conversation selects an account again; --account overrides the stored request.
+  const resolved = { ...spec.resolved, conversation: null, timeout: DEFAULTS.timeout[job.mode],
+    account_request: opts.account ? accountRequest(opts) : spec.resolved.account_request || accountRequest({}) };
   if (opts.timeout) {
     resolved.timeout = resolveRun(job.mode, { ...opts, model: resolved.model, [resolved.profile]: true }).timeout;
   }
@@ -1780,6 +1951,8 @@ function cmdSetup(opts) {
   const denied = settings.permissions?.deny || [];
   const missing = EVIDENCE_ALLOWLIST.filter((r) => !current.includes(r));
   const missingDeny = EVIDENCE_DENYLIST.filter((r) => !denied.includes(r));
+  const poolTargets = poolSettingsTargets();
+  const poolPending = poolTargets.filter((t) => t.missing.length || t.missingDeny.length);
 
   process.stdout.write(`agy CLI: OK (version ${v.out})\n`);
   const profiles = loadProjectConfig()?.profiles || {};
@@ -1790,7 +1963,7 @@ function cmdSetup(opts) {
     : '(none — built-in defaults apply)';
   process.stdout.write(`Project policy (${configPath()}): ${policyLine}\n`);
   process.stdout.write(`Global settings file: ${AGY_SETTINGS} ${exists ? '(exists)' : '(will be created)'}\n\n`);
-  if (!missing.length && !missingDeny.length) {
+  if (!missing.length && !missingDeny.length && !poolPending.length) {
     process.stdout.write('The evidence-gathering allow/deny rules are already installed. Nothing to do.\n');
     printSetupNotes();
     return;
@@ -1809,6 +1982,10 @@ function cmdSetup(opts) {
     process.stdout.write(`  ${r}${denied.includes(r) ? '  (already present)' : ''}\n`);
   }
   process.stdout.write(`\nMissing rules will be appended to "permissions.allow" and "permissions.deny" in ${AGY_SETTINGS}.\n`);
+  if (poolTargets.length) {
+    process.stdout.write('The same rules are applied to each pool account settings file:\n');
+    for (const t of poolTargets) process.stdout.write(`  ${t.name}: ${t.file}${t.missing.length || t.missingDeny.length ? '' : '  (already present)'}\n`);
+  }
   process.stdout.write(
     'Scope: this file is GLOBAL — the rules apply to every agy run on this machine, not just this repository.\n' +
       'Broad git/gh grants avoid enumerating every task\'s commands; five deny prefixes block common risky operations.\n' +
@@ -1827,20 +2004,50 @@ function cmdSetup(opts) {
     return;
   }
 
-  if (exists) {
-    const backup = `${AGY_SETTINGS}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    fs.copyFileSync(AGY_SETTINGS, backup);
-    process.stdout.write(`\nBacked up settings to ${backup}\n`);
-  } else {
-    fs.mkdirSync(path.dirname(AGY_SETTINGS), { recursive: true });
-  }
+  if (missing.length || missingDeny.length) {
+    if (exists) {
+      const backup = `${AGY_SETTINGS}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      fs.copyFileSync(AGY_SETTINGS, backup);
+      process.stdout.write(`\nBacked up settings to ${backup}\n`);
+    } else {
+      fs.mkdirSync(path.dirname(AGY_SETTINGS), { recursive: true });
+    }
 
-  settings.permissions = settings.permissions || {};
-  settings.permissions.allow = [...current, ...missing];
-  settings.permissions.deny = [...denied, ...missingDeny];
-  fs.writeFileSync(AGY_SETTINGS, JSON.stringify(settings, null, 2) + '\n');
-  process.stdout.write(`Wrote ${missing.length} allow-rule(s) and ${missingDeny.length} deny-rule(s) to ${AGY_SETTINGS}. Setup complete.\n`);
+    settings.permissions = settings.permissions || {};
+    settings.permissions.allow = [...current, ...missing];
+    settings.permissions.deny = [...denied, ...missingDeny];
+    fs.writeFileSync(AGY_SETTINGS, JSON.stringify(settings, null, 2) + '\n');
+    process.stdout.write(`Wrote ${missing.length} allow-rule(s) and ${missingDeny.length} deny-rule(s) to ${AGY_SETTINGS}. Setup complete.\n`);
+  }
+  for (const target of poolTargets) applyPoolRules(target);
   printSetupNotes();
+}
+
+/** Settings files of every pool account, with the evidence rules each one lacks. */
+function poolSettingsTargets() {
+  if (!poolExists()) return [];
+  return poolSettingsFiles().map(({ name, file }) => {
+    let settings = {};
+    try { settings = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) {
+      if (error.code !== 'ENOENT') die(`cannot read settings ${file}: ${error.message}`);
+    }
+    const allow = settings.permissions?.allow || [];
+    const deny = settings.permissions?.deny || [];
+    return { name, file, settings, allow, deny,
+      missing: EVIDENCE_ALLOWLIST.filter((r) => !allow.includes(r)),
+      missingDeny: EVIDENCE_DENYLIST.filter((r) => !deny.includes(r)) };
+  });
+}
+
+function applyPoolRules(t) {
+  if (!t.missing.length && !t.missingDeny.length) return;
+  if (fs.existsSync(t.file)) fs.copyFileSync(t.file, `${t.file}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  else fs.mkdirSync(path.dirname(t.file), { recursive: true });
+  t.settings.permissions = t.settings.permissions || {};
+  t.settings.permissions.allow = [...t.allow, ...t.missing];
+  t.settings.permissions.deny = [...t.deny, ...t.missingDeny];
+  fs.writeFileSync(t.file, JSON.stringify(t.settings, null, 2) + '\n');
+  process.stdout.write(`Wrote ${t.missing.length} allow-rule(s) and ${t.missingDeny.length} deny-rule(s) to pool account ${t.name}: ${t.file}\n`);
 }
 
 function printSetupNotes() {
@@ -1876,10 +2083,13 @@ function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     die(
-      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup|install|uninstall> [flags]\n' +
+      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup|install|uninstall|accounts> [flags]\n' +
         'flags: --restricted|--unrestricted --model <id> --effort <l|m|h> --timeout <dur> ' +
         '--prompt <text> --prompt-file <path> --stdin --conversation <id> --continue --json (review) ' +
+        '--account <auto|live|name> (run commands, continue, restart) ' +
         '--apply --restrict <modes|none> (setup) --hosts <a,b> --all --dry-run --status (install/uninstall)\n' +
+        'accounts <list|login|import|remove|enable|disable|cooldown clear|quota> manages the pool of private agy logins ' +
+        '(login <name>; import <name> --home <dir>; remove <name> --yes; cooldown clear <name> --family <f>; quota [<name>...] --refresh --json; list --json).\n' +
         'task text for staffer/research/review/implement/ask/continue comes from exactly one of ' +
         '--prompt <text>, --prompt-file <path>, or --stdin.\n' +
         'staffer/research/review/implement run unrestricted by default (no setup needed); --restricted is the ' +
@@ -1911,6 +2121,8 @@ function main() {
       return cmdInstall(opts);
     case 'uninstall':
       return cmdUninstall(opts);
+    case 'accounts':
+      return cmdAccounts(opts, { agyCommand, liveSettings: AGY_SETTINGS });
     case '_worker':
       return workerMain(rest[0]);
     default:

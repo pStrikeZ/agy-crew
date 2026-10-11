@@ -1,0 +1,148 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { run, sandbox } from './helpers.mjs';
+import { FAMILY, accountHomeOf, readPool, runAsync, seedPool } from './pool-helpers.mjs';
+
+const SUMMARY = { groups: [
+  { displayName: 'Gemini models', buckets: [
+    { id: 'gemini-flash-5h', window: '5h', remainingFraction: 0.25, resetTime: '2031-01-01T05:00:00Z' },
+    { id: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0.5, resetTime: '2031-01-07T00:00:00Z' }] },
+  { displayName: 'Claude and GPT', buckets: [{ id: '3p-5h', window: '5h', remainingFraction: 0.9, resetTime: '2031-01-01T05:00:00Z' }] },
+] };
+
+/** Local Cloud Code stand-in. `accept(token)` decides between 200 and 401. */
+async function cloudCode(accept, summary = SUMMARY) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      seen.push({ url: req.url, auth: req.headers.authorization, agent: req.headers['user-agent'], type: req.headers['content-type'], body: JSON.parse(body || '{}') });
+      const token = String(req.headers.authorization || '').replace('Bearer ', '');
+      if (!accept(token)) { res.writeHead(401).end('{}'); return; }
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/v1internal:loadCodeAssist') res.end(JSON.stringify({ cloudaicompanionProject: { id: 'proj-9' }, planInfo: { planType: 'pro' } }));
+      else if (req.url === '/v1internal:retrieveUserQuotaSummary') res.end(JSON.stringify(summary));
+      else res.writeHead(404).end('{}');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { url: `http://127.0.0.1:${server.address().port}`, seen, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+test('quota --refresh stores snapshots, clears recovered cooldowns, and never prints tokens', async () => {
+  const sb = sandbox('pool-quota');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }], (p) => {
+    p.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
+    p.cooldowns['a|claude-sonnet-4-6'] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
+  });
+  const server = await cloudCode((token) => token === 'fake-access');
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', '--refresh', '--json'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('fake-access') && !r.stderr.includes('fake-access'));
+    const [load, summary] = server.seen;
+    assert.equal(load.url, '/v1internal:loadCodeAssist');
+    assert.equal(load.auth, 'Bearer fake-access');
+    assert.equal(load.agent, 'antigravity');
+    assert.equal(load.type, 'application/json');
+    assert.deepEqual(load.body, { metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } });
+    assert.deepEqual(summary.body, { project: 'proj-9' });
+
+    const snapshot = readPool(sb).quota.a;
+    assert.equal(snapshot.plan_type, 'pro');
+    assert.equal(snapshot.error, null);
+    assert.deepEqual(snapshot.pools.gemini.short, { remaining: 0.25, reset_at: '2031-01-01T05:00:00.000Z' });
+    assert.equal(snapshot.pools.gemini.weekly.remaining, 0.5);
+    assert.equal(snapshot.pools.other.short.remaining, 0.9);
+    assert.equal(fs.readFileSync(path.join(accountHomeOf(sb, 'a'), '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt'), 'utf8'), 'proj-9');
+    assert.deepEqual(readPool(sb).cooldowns, {}, 'quota left in both pools clears the cooldowns');
+
+    const cached = run(sb, ['accounts', 'quota']);
+    assert.equal(cached.code, 0);
+    assert.match(cached.stdout, /gemini 5h 25% weekly 50%/);
+    const listed = run(sb, ['accounts', 'list']);
+    assert.match(listed.stdout, /quota: gemini 5h 25% weekly 50% \| other 5h 90%/);
+  } finally { await server.close(); }
+});
+
+test('an empty gemini window keeps auto selection away from the account until its reset', async () => {
+  const sb = sandbox('pool-quota-exhausted');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }, { name: 'b', email: 'b@x' }]);
+  const emptyGemini = { groups: [{ displayName: 'Gemini', buckets: [{ id: 'gemini-5h', window: '5h', remainingFraction: 0, resetTime: '2031-01-01T05:00:00Z' }] }] };
+  const server = await cloudCode(() => true, emptyGemini);
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', 'a', '--refresh'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(r.code, 0, r.stderr);
+  } finally { await server.close(); }
+  const envFile = path.join(sb.root, 'env.jsonl');
+  assert.equal(run(sb, ['ask', '--prompt', 'hi'], { FAKE_AGY_ENV_FILE: envFile }).code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(envFile, 'utf8').trim()).account_email, 'b@x');
+});
+
+test('a 401 triggers one warm-up run with the account env and then a retry', async () => {
+  const sb = sandbox('pool-quota-401');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const envFile = path.join(sb.root, 'warm.jsonl');
+  const cwdFile = path.join(sb.root, 'warm-cwd');
+  const server = await cloudCode((token) => token === 'fresh');
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', '--refresh'], {
+      AGY_CREW_CLOUDCODE_URL: server.url, FAKE_AGY_NEW_ACCESS_TOKEN: 'fresh', FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_CWD_FILE: cwdFile,
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(server.seen[0].auth, 'Bearer fake-access');
+    assert.ok(server.seen.slice(1).every((s) => s.auth === 'Bearer fresh'));
+    const warm = fs.readFileSync(envFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(warm.length, 1);
+    assert.equal(warm[0].HOME, accountHomeOf(sb, 'a'));
+    assert.equal(warm[0].SSH_CONNECTION, '127.0.0.1 1 127.0.0.1 1');
+    assert.equal(fs.readFileSync(cwdFile, 'utf8'), accountHomeOf(sb, 'a'));
+    const argv = JSON.parse(fs.readFileSync(sb.argvFile, 'utf8').trim().split('\n')[0]);
+    assert.deepEqual(argv, ['-p', 'reply with one word: pong', '--output-format', 'json']);
+    assert.equal(readPool(sb).quota.a.error, null);
+    assert.equal(readPool(sb).accounts[0].auth_error_at, null);
+  } finally { await server.close(); }
+});
+
+test('a credential that is still rejected after the warm-up marks the account as needing login', async () => {
+  const sb = sandbox('pool-quota-401-final');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const server = await cloudCode(() => false);
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', '--refresh', '--json'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(r.code, 0, r.stderr);
+    const pool = readPool(sb);
+    assert.match(pool.quota.a.error, /401/);
+    assert.ok(pool.accounts[0].auth_error_at);
+  } finally { await server.close(); }
+  const list = JSON.parse(run(sb, ['accounts', 'list', '--json']).stdout);
+  assert.equal(list.accounts[0].state, 'needs login');
+});
+
+test('quota --refresh warms up an expiring token before the first request', async () => {
+  const sb = sandbox('pool-quota-expiring');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const tokenFile = path.join(accountHomeOf(sb, 'a'), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  const json = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+  json.token.expiry = new Date(Date.now() + 30_000).toISOString();
+  fs.writeFileSync(tokenFile, JSON.stringify(json));
+  const server = await cloudCode((token) => token === 'renewed');
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', 'a', '--refresh'], { AGY_CREW_CLOUDCODE_URL: server.url, FAKE_AGY_NEW_ACCESS_TOKEN: 'renewed' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(server.seen.every((s) => s.auth === 'Bearer renewed'), 'no request used the expiring token');
+    assert.equal(readPool(sb).quota.a.plan_type, 'pro');
+  } finally { await server.close(); }
+});
+
+test('quota for an unknown account is an error', () => {
+  const sb = sandbox('pool-quota-unknown');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const r = run(sb, ['accounts', 'quota', 'ghost']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /unknown account "ghost"/);
+});

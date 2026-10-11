@@ -8,7 +8,7 @@ import { generateSkills, skillFiles, ROOT, COMPATIBILITY_CONTEXT } from '../scri
 import { sandbox, FAKE_AGY, jobIdOf } from './helpers.mjs';
 import { pack } from './pi-pack-helpers.mjs';
 
-const names = ['ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
+const names = ['accounts', 'ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
 
 test('OpenCode output preserves canonical policy, rewrites invocations, and resolves every resource', () => {
   assert.deepEqual(generateSkills({ target: 'opencode', check: true }).changed, []);

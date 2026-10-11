@@ -11,7 +11,7 @@ import { pack } from './pi-pack-helpers.mjs';
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const generatePiSkills = options => generateSkills({ ...options, target: 'pi' });
 const piFiles = () => skillFiles(ROOT, 'pi');
-const names = ['ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
+const names = ['accounts', 'ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
 
 test('Pi adapters are current; canonical names and all relative resources remain valid', () => {
   assert.deepEqual(generatePiSkills({ check: true }).changed, []);
