@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 632" role="img" aria-label="agy-staff exposes asynchronous agent work through persona skills and ordinary shell tool calls. The host agent delegates a task, receives a job ID, and starts a background wait where supported. It can continue other work; only an explicit user progress question triggers a bounded snapshot. The worker runs AGY independently, continuously drains its stream-json output, stores events and progress, and saves a final report. Wait expiry leaves execution running. The host controls model scheduling while the worker enforces a separate deadline, default 60 minutes and configurable up to 120 minutes.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 632" role="img" aria-label="agy-crew exposes asynchronous agent work through persona skills and ordinary shell tool calls. The host agent delegates a task, receives a job ID, and starts a background wait where supported. It can continue other work; only an explicit user progress question triggers a bounded snapshot. The worker runs AGY independently, continuously drains its stream-json output, stores events and progress, and saves a final report. Wait expiry leaves execution running. The host controls model scheduling while the worker enforces a separate deadline, default 60 minutes and configurable up to 120 minutes.">
   <style>
     text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #202124; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -77,7 +77,7 @@
 
   <!-- ===== 02 · PLUGIN: bash commands (blue) ===== -->
   <rect x="48" y="260" width="824" height="112" rx="10" fill="#FFFFFF" stroke="#4285F4" stroke-width="1.5"/>
-  <text x="62" y="285" class="label" style="fill:#1A73E8">02 · AGY-STAFF<tspan class="sub" dx="7">· skills guide the agent; shell commands manage the job</tspan></text>
+  <text x="62" y="285" class="label" style="fill:#1A73E8">02 · AGY-CREW<tspan class="sub" dx="7">· skills guide the agent; shell commands manage the job</tspan></text>
   <rect x="236" y="312" width="604" height="28" rx="6" fill="#FEF7E0" stroke="#F29900" stroke-width="1.5"/>
   <text x="246" y="330" font-size="11" font-weight="700" class="mono" style="fill:#B06000">wait &lt;id&gt; --timeout 10m</text>
   <text x="414" y="330" font-size="10" class="mono" style="fill:#B06000">silent until ready</text>

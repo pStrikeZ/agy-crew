@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo/gemini-agy.svg" width="440" alt="AGY-STAFF"></p>
+<p align="center"><img src="assets/logo/gemini-agy.svg" width="440" alt="AGY-CREW"></p>
 
 <p align="center"><a href="README.md">English</a> | <a href="README.zh-CN.md">Simplified Chinese</a></p>
 

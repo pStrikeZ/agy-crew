@@ -5,19 +5,19 @@ Four candidate lockups for the README masthead, built on the same bitmap
 machinery as scripts/gen_badges.py (5x7 glyph font, merged rect runs, stair
 corners, hard shadows) at logo scale:
 
-  A pure-wordmark.svg  two-tone AGY-STAFF wordmark with a purple hyphen
+  A pure-wordmark.svg  two-tone AGY-CREW wordmark with a purple hyphen
   B bolt.svg           wordmark with a yellow lightning bolt for the hyphen
   C arch-lockup.svg    ink stair tile with the Antigravity arch + wordmark
   D id-card.svg        a tiny pixel employee ID card (arch photo, name line,
-                       barcode) playing on the "staff" concept
+                       barcode) playing on the "crew" concept
   E bolt-gradient.svg  variant B with a simple warm-to-blue vertical step
   F bolt-rainbow.svg   variant B with the TRUE Antigravity 2D gradient
                        (spectral wheel sampled from the CLI's own pixel arch)
   G gemini-gradient.svg  variant B with the Gemini wordmark's horizontal
                        sweep (blue -> periwinkle -> violet -> mauve -> rose)
-                       across the whole line, violet sparkle over the last F
+                       across the whole line, violet sparkle over the last letter
   H gemini-agy.svg     the full Gemini sweep compressed into AGY only,
-                       STAFF back to theme-flipping ink, sparkle over the Y
+                       CREW back to theme-flipping ink, sparkle over the Y
 
 arch-rainbow-sprite.svg is a standalone preview of the corrected pixel
 arch, reconstructed cell-by-cell from the Antigravity CLI welcome screen
@@ -39,6 +39,8 @@ from gen_badges import (  # noqa: E402
 )
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "assets" / "logo"
+
+WORD = "CREW"  # second word of the wordmark (AGY-<WORD>)
 
 RED = "#D93025"
 TINT = "#E8F0FE"
@@ -73,17 +75,17 @@ def arch_sprite(x, y, u):
 
 
 def wordmark(x, y, u, sh=None, hyphen="pixel"):
-    """AGY-STAFF: AGY blue, hyphen purple (or a yellow bolt), STAFF ink.
+    """AGY-CREW: AGY blue, hyphen purple (or a yellow bolt), CREW ink.
 
     Returns (markup, width)."""
     parts = []
     agy_w = _pw("AGY", u)
     hy_w = _pw("-", u) if hyphen == "pixel" else (len(BOLT[0]) + 1) * u
-    total = agy_w + u + hy_w + u + _pw("STAFF", u)
+    total = agy_w + u + hy_w + u + _pw(WORD, u)
     if sh is not None:
         # single hard shadow behind the whole line
         shadow = (_prects(x, y, "AGY", u)
-                  + _prects(x + agy_w + u + hy_w + u, y, "STAFF", u))
+                  + _prects(x + agy_w + u + hy_w + u, y, WORD, u))
         if hyphen == "pixel":
             shadow += _prects(x + agy_w + u, y, "-", u)
         parts.append('<g class="sh" transform="translate({0},{0})">{1}</g>'
@@ -95,7 +97,7 @@ def wordmark(x, y, u, sh=None, hyphen="pixel"):
     else:
         parts.append(group(YELLOW, _rects_svg(_runs(BOLT, hx, y, u))))
     sx = hx + hy_w + u
-    parts.append(group("ink", _rects_svg(_prects(sx, y, "STAFF", u)), cls=True))
+    parts.append(group("ink", _rects_svg(_prects(sx, y, WORD, u)), cls=True))
     return "".join(parts), total
 
 
@@ -103,14 +105,14 @@ def variant_a():
     u, sh, pad = 8, 3, 8
     body, w = wordmark(pad, pad, u, sh=sh)
     W, H = pad * 2 + w + sh, pad * 2 + 7 * u + sh
-    return svg(W, H, "AGY-STAFF pixel wordmark", body)
+    return svg(W, H, "AGY-CREW pixel wordmark", body)
 
 
 def variant_b():
     u, sh, pad = 8, 3, 8
     body, w = wordmark(pad, pad, u, sh=sh, hyphen="bolt")
     W, H = pad * 2 + w + sh, pad * 2 + 7 * u + sh
-    return svg(W, H, "AGY-STAFF pixel wordmark with lightning bolt", body)
+    return svg(W, H, "AGY-CREW pixel wordmark with lightning bolt", body)
 
 
 def variant_c():
@@ -129,7 +131,7 @@ def variant_c():
     body += wm
     W = pad * 2 + tile + 18 + w + 4
     H = pad * 2 + tile + 3
-    return svg(W, H, "AGY-STAFF lockup with Antigravity arch tile", body)
+    return svg(W, H, "AGY-CREW lockup with Antigravity arch tile", body)
 
 
 def variant_d():
@@ -162,17 +164,17 @@ def variant_d():
     body.append(arch_sprite(ox + 12 + (52 - 9 * 4) // 2,
                             oy + 30 + (52 - 8 * 4) // 2, 4))
     # name + role lines in bitmap type (u=2 cleanly fits the card without clipping)
-    body.append(group(INK, _rects_svg(_prects(ox + 76, oy + 30, "AGY-STAFF", 2))))
+    body.append(group(INK, _rects_svg(_prects(ox + 76, oy + 30, "AGY-" + WORD, 2))))
     body.append(group(RED, _rects_svg(_prects(ox + 76, oy + 50, "WORKER", 2))))
     # barcode: deterministic pixel bars from the letters of the name
     bx, by = ox + 76, oy + 76
-    for i, ch2 in enumerate("AGYSTAFFAGYSTAFF"):
+    for i, ch2 in enumerate(("AGY" + WORD) * 2):
         wbar = 2 + (ord(ch2) % 3) * 2
         body.append('<rect fill="{}" x="{}" y="{}" width="{}" height="24"/>'
                     .format(INK, bx, by, wbar))
         bx += wbar + 3
     W, H = cw + 27, ch + oy + 8
-    return svg(W, H, "AGY-STAFF pixel employee ID card", "".join(body))
+    return svg(W, H, "AGY-CREW pixel employee ID card", "".join(body))
 
 
 # Antigravity vertical gradient, stepped per glyph row (7 rows). Stops are
@@ -282,10 +284,10 @@ SPARK_MINI = (  # 5x5 four-point star for masthead scale
 
 
 def gemini_line(x, y, u, bolt_after):
-    """AGY + bolt + STAFF with the Gemini sweep per pixel column.
+    """AGY + bolt + WORD with the Gemini sweep per pixel column.
 
     bolt_after: index in the glyph sequence after which the bolt sits."""
-    seq = "AGYSTAFF"
+    seq = "AGY" + WORD
     widths = [len(_glyph(ch)[0]) for ch in seq]
     bolt_cols = len(BOLT[0])
     total_cols = sum(w + 1 for w in widths) + bolt_cols + 1 - 1
@@ -322,19 +324,19 @@ def variant_g():
     # hard shadow for the whole line (letters only; bolt drawn on top)
     shadow = _prects(pad, pad + head, "AGY", u)
     sx = bolt_pos[0] + (len(BOLT[0]) + 1) * u
-    shadow += _prects(sx, pad + head, "STAFF", u)
+    shadow += _prects(sx, pad + head, WORD, u)
     body = '<g class="sh" transform="translate({0},{0})">{1}</g>'.format(
         sh, _rects_svg(shadow))
     body += body_line
     body += group(YELLOW, _rects_svg(_runs(BOLT, bolt_pos[0], pad + head, u)))
-    # violet sparkle centered over the final F, Gemini-style dotted-i gesture
+    # violet sparkle centered over the final letter, Gemini-style dotted-i gesture
     spark_u = 3
     spark_x = pad + line_w - (5 * u + 5 * spark_u) // 2
     body += group(GEM_SPARKLE, _rects_svg(_runs(SPARK_MINI, spark_x, 0, spark_u)))
     W = pad * 2 + line_w + sh
     H = pad * 2 + head + 7 * u + sh
     return svg(W, H,
-               "AGY-STAFF pixel wordmark, Gemini horizontal gradient sweep",
+               "AGY-CREW pixel wordmark, Gemini horizontal gradient sweep",
                body)
 
 
@@ -350,11 +352,11 @@ def variant_h(sparkle=True):
     y = pad + head
     agy_w = _pw("AGY", u)
     bolt_w = (len(BOLT[0]) + 1) * u
-    total = agy_w + u + bolt_w + u + _pw("STAFF", u)
+    total = agy_w + u + bolt_w + u + _pw(WORD, u)
     sx = pad + agy_w + u + bolt_w + u
     body = '<g class="sh" transform="translate({0},{0})">{1}</g>'.format(
         sh, _rects_svg(_prects(pad, y, "AGY", u)
-                       + _prects(sx, y, "STAFF", u)))
+                       + _prects(sx, y, WORD, u)))
     by = {}
     col = 0
     cx = pad
@@ -372,7 +374,7 @@ def variant_h(sparkle=True):
     body += "".join('<g fill="{}">{}</g>'.format(k, "".join(v))
                     for k, v in sorted(by.items()))
     body += group(YELLOW, _rects_svg(_runs(BOLT, pad + agy_w + u, y, u)))
-    body += group("ink", _rects_svg(_prects(sx, y, "STAFF", u)), cls=True)
+    body += group("ink", _rects_svg(_prects(sx, y, WORD, u)), cls=True)
     if sparkle:
         spark_u = 3
         y_x = pad + 12 * u                     # Y glyph left edge
@@ -381,7 +383,7 @@ def variant_h(sparkle=True):
                       _rects_svg(_runs(SPARK_MINI, spark_x, 0, spark_u)))
     W, H = pad * 2 + total + sh, pad * 2 + head + 7 * u + sh
     return svg(W, H,
-               "AGY-STAFF pixel wordmark, Gemini gradient on AGY with bolt",
+               "AGY-CREW pixel wordmark, Gemini gradient on AGY with bolt",
                body)
 
 
@@ -389,17 +391,17 @@ def variant_f():
     u, sh, pad = 8, 3, 8
     agy_w = _pw("AGY", u)
     bolt_w = (len(BOLT[0]) + 1) * u
-    total = agy_w + u + bolt_w + u + _pw("STAFF", u)
+    total = agy_w + u + bolt_w + u + _pw(WORD, u)
     sx = pad + agy_w + u + bolt_w + u
     body = '<g class="sh" transform="translate({0},{0})">{1}</g>'.format(
         sh, _rects_svg(_prects(pad, pad, "AGY", u)
-                       + _prects(sx, pad, "STAFF", u)))
+                       + _prects(sx, pad, WORD, u)))
     body += rainbow_text(pad, pad, "AGY", u)
     body += group(YELLOW, _rects_svg(_runs(BOLT, pad + agy_w + u, pad, u)))
-    body += group("ink", _rects_svg(_prects(sx, pad, "STAFF", u)), cls=True)
+    body += group("ink", _rects_svg(_prects(sx, pad, WORD, u)), cls=True)
     W, H = pad * 2 + total + sh, pad * 2 + 7 * u + sh
     return svg(W, H,
-               "AGY-STAFF pixel wordmark, true Antigravity spectral gradient",
+               "AGY-CREW pixel wordmark, true Antigravity spectral gradient",
                body)
 
 
@@ -441,18 +443,18 @@ def variant_e(dither=False):
     u, sh, pad = 8, 3, 8
     agy_w = _pw("AGY", u)
     bolt_w = (len(BOLT[0]) + 1) * u
-    total = agy_w + u + bolt_w + u + _pw("STAFF", u)
+    total = agy_w + u + bolt_w + u + _pw(WORD, u)
     sx = pad + agy_w + u + bolt_w + u
     body = '<g class="sh" transform="translate({0},{0})">{1}</g>'.format(
         sh, _rects_svg(_prects(pad, pad, "AGY", u)
-                       + _prects(sx, pad, "STAFF", u)))
+                       + _prects(sx, pad, WORD, u)))
     body += banded_text(pad, pad, "AGY", u, GRAD_ROWS,
                         dither_row=2 if dither else None)
     body += group(YELLOW, _rects_svg(_runs(BOLT, pad + agy_w + u, pad, u)))
-    body += group("ink", _rects_svg(_prects(sx, pad, "STAFF", u)), cls=True)
+    body += group("ink", _rects_svg(_prects(sx, pad, WORD, u)), cls=True)
     W, H = pad * 2 + total + sh, pad * 2 + 7 * u + sh
     return svg(W, H,
-               "AGY-STAFF pixel wordmark, Antigravity gradient with bolt",
+               "AGY-CREW pixel wordmark, Antigravity gradient with bolt",
                body, extra_style=GRAD_STYLE)
 
 

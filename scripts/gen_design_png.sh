@@ -6,6 +6,10 @@
 # `data:image/png;base64` image that the sanitizer can drop.
 #
 # Requires librsvg (`brew install librsvg`).
+#
+# Alternative without librsvg (Windows): Microsoft Edge headless renders the SVG
+# faithfully, e.g. in Git Bash:
+#   msedge.exe --headless=new --disable-gpu --hide-scrollbars \n#     --force-device-scale-factor=3 --window-size=920,448 \n#     --default-background-color=FFFFFFFF \n#     --screenshot=<abs path>ssetsdesign.png "file:///<abs path>/assets/design.svg"
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

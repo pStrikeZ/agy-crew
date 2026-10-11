@@ -247,7 +247,7 @@ function diagramIntegration() {
   ${[T1.cx - 20, T1.cx + 20, T2.cx, T4.cx - 20, T4.cx + 20, T5.cx].map(x => slot(x, A.y + A.h)).join('')}
 
   <!-- ===== 02 · PLUGIN: bash commands (blue) ===== -->
-  ${frame(B, '02 · AGY-STAFF', 'skills guide the agent; shell commands manage the job', BLUE, LINK)}
+  ${frame(B, '02 · AGY-CREW', 'skills guide the agent; shell commands manage the job', BLUE, LINK)}
   <rect x="${WAIT.x}" y="${WAIT.y}" width="${WAIT.w}" height="${WAIT.h}" rx="6" fill="${WAIT_C.fill}" stroke="${WAIT_C.stroke}" stroke-width="1.5"/>
   <text x="${WAIT.x + 10}" y="${WAIT.y + 18}" font-size="11" font-weight="700" class="mono" style="fill:${WAIT_C.text}">wait &lt;id&gt; --timeout 10m</text>
   <text x="${T3.x + 22}" y="${WAIT.y + 18}" font-size="10" class="mono" style="fill:${WAIT_C.text}">silent until ready</text>
@@ -285,7 +285,7 @@ function diagramIntegration() {
   ${fact(px(CLOCK, 340, 592, 2, AMBER), 338, 370, 607, 'Host schedules agent turns')}
   ${px(PLUG, 615, 592, 2, LINK)}<text x="644" y="607" font-size="12.5"><tspan font-weight="700" fill="${LINK}">Skills + shell tools</tspan></text>`;
 
-  return shell(W, H, 'agy-staff exposes asynchronous agent work through persona skills and ordinary shell tool calls. The host agent delegates a task, receives a job ID, and starts a background wait where supported. It can continue other work; only an explicit user progress question triggers a bounded snapshot. The worker runs AGY independently, continuously drains its stream-json output, stores events and progress, and saves a final report. Wait expiry leaves execution running. The host controls model scheduling while the worker enforces a separate deadline, default 60 minutes and configurable up to 120 minutes.', body);
+  return shell(W, H, 'agy-crew exposes asynchronous agent work through persona skills and ordinary shell tool calls. The host agent delegates a task, receives a job ID, and starts a background wait where supported. It can continue other work; only an explicit user progress question triggers a bounded snapshot. The worker runs AGY independently, continuously drains its stream-json output, stores events and progress, and saves a final report. Wait expiry leaves execution running. The host controls model scheduling while the worker enforces a separate deadline, default 60 minutes and configurable up to 120 minutes.', body);
 }
 
 // Keep the optional integration argument compatible with earlier regeneration commands.
