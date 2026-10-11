@@ -12,7 +12,7 @@ Hire Google's Antigravity CLI (`agy`) as a staffer for **Claude Code**, **OpenAI
 
 ![design diagram](assets/design.png)
 
-**[Install](#install) · [Examples](#cujs) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Upgrade](#upgrade) · [Relationship to agy-staff](#relationship-to-agy-staff)**
+**[Install](#install) · [Examples](#cujs) · [Account pool](#account-pool) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Upgrade](#upgrade) · [Relationship to agy-staff](#relationship-to-agy-staff)**
 
 ## What & Why
 
@@ -28,7 +28,7 @@ agy-crew keeps agy-staff's personas, background jobs and portable bash-plus-skil
 
 1. a terminal command `agy-crew` and an `install` command that puts the skills into every detected harness from one shared bundle, replacing per-harness plugin caches;
 2. strict mutual exclusion with upstream agy-staff (the installer refuses to run beside it);
-3. an **account pool** for running concurrent jobs on different agy accounts with per-account, per-model-family quota awareness. This part is **planned for the next releases and is not available yet**.
+3. an **account pool** for running concurrent jobs on different agy accounts with per-account, per-model-family quota awareness (see [Account pool](#account-pool)).
 
 The `-crew` suffix pairs with the author's `codex-staff`: `-staff` is single-account delegation, `-crew` is pooled.
 
@@ -121,7 +121,7 @@ With OpenCode V1 (≥1.18.34 <2), install the package through its native plugin 
 opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global
 ```
 
-Restart OpenCode, then run `/agy-crew-ask reply with OK`. The plugin automatically registers all seven `agy-crew-*` skills and their native slash commands, including `/agy-crew-lead` and `/agy-crew-jobs`. No separate skills path or command wrappers are needed. Node.js and an authenticated `agy` are required, as above.
+Restart OpenCode, then run `/agy-crew-ask reply with OK`. The plugin automatically registers all eight `agy-crew-*` skills and their native slash commands, including `/agy-crew-lead`, `/agy-crew-jobs` and `/agy-crew-accounts`. No separate skills path or command wrappers are needed. Node.js and an authenticated `agy` are required, as above.
 
 OpenCode caches the complete package spec. Restarting does not refresh an unchanged Git spec. To upgrade, choose a newer Git tag or commit and run `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`, then restart. See [the reference](docs/REFERENCE.md#opencode) for config and local development. OpenCode V2 is not covered by this adapter.
 
@@ -178,6 +178,26 @@ Examples below use the user-level form `/agy-crew-…` (Codex shows it as `$agy-
 
 `staffer` also covers agy's native tools without a dedicated specialist persona, including **image generation** (`generate_image`). A trial on agy v1.1.15 produced a 1024×1024 PNG in about 30 seconds; actual time depends on the task and environment.
 
+## Account pool
+
+One agy login has one quota, so concurrent jobs on it queue behind each other and a hot model runs dry. The account pool lets background jobs run on several agy accounts at once, tracking quota per account and per model family.
+
+Quick start:
+
+```bash
+agy-crew install                    # as above
+agy-crew accounts login work1       # opens a browser sign-in; run it yourself, in your terminal
+agy-crew accounts list              # shows work1 as ready
+```
+
+From then on, runs pick an account automatically (`--account auto` is the default): an idle account first, then the one with the most known quota left. Repeat `login` with another name for more accounts. Your own agy login (**live**) is never pooled: `auto` never uses it and it never lends credentials. It is used only with `--account live`, or when the pool has no enabled account, so an empty pool changes nothing.
+
+When an account hits a quota limit, the companion records a cooldown for that account and model family (until the reset time agy reports, or 60 minutes if none). A run that had not started a conversation fails over to another account. A run in the middle of a conversation stays bound to its account, because the history lives there; if that account is cooling, an idle account lends its credential for the rest of the run and the token files are restored afterwards, including after a crash. If nothing can continue, the job ends with `quota_exhausted` and a `retry_at`, and you decide when to `continue`. `agy-crew accounts quota --refresh` asks Google's Cloud Code service for current quota; that is the only command that uses the network.
+
+Already have accounts? `agy-crew accounts import work2 --home <dir>` copies the token from an existing HOME-shaped directory, such as an agy-cli-manager account directory. Other subcommands: `enable`, `disable`, `cooldown clear`, `remove --yes`. Full details in the [reference](docs/REFERENCE.md#accounts).
+
+Parallel jobs now make sense up to roughly the number of ready accounts. With an empty pool everything runs on your live login.
+
 ## Core design
 
 `lead` adds task orchestration guidance for your current agent. Within lead, orient enough to frame the assignment, delegate substantive work to `staffer` by default, wait for the result, then assess it and integrate or follow up. Specialists provide dedicated guidance when useful, while `ask` is reserved for testing. The host owns cross-task decisions, acceptance, integration, and delivery, using the existing jobs workflow. Invoke `/agy-crew-lead` (or `/agy-crew:lead` on the Claude Code plugin route, `$agy-crew:lead` on the Codex plugin route, `/skill:agy-crew-lead` on Pi).
@@ -212,9 +232,9 @@ Before writing any code, the agent lists the principles your CLI cannot support,
 
 agy-crew is a fork of [agy-staff](https://github.com/keli-wen/agy-staff) v0.7.4 by Keli Wen, published under the same MIT license. Version numbering continues the agy-staff history (this fork starts at 0.8.0).
 
-What changed: the product was renamed throughout (plugin id `agy-crew@agy-crew`, per-repository state in `.agy-crew/`, `[agy-crew]` telemetry, `agy-crew error:` prefix), a terminal command and cross-harness `install` were added, and an account pool is planned. Upstream changes continue to be merged where they apply.
+What changed: the product was renamed throughout (plugin id `agy-crew@agy-crew`, per-repository state in `.agy-crew/`, `[agy-crew]` telemetry, `agy-crew error:` prefix), a terminal command and cross-harness `install` were added (0.8.0), and an account pool (0.9.0). Upstream changes continue to be merged where they apply.
 
-agy-crew and agy-staff cannot coexist: both would show their skills to the agent and write the same per-repository state, so `agy-crew install` refuses to run when it finds agy-staff and prints how to remove it. There is no in-place upgrade; uninstall agy-staff, then install agy-crew. State in `.agy-staff/` is not migrated. To go back to upstream, run `agy-crew uninstall --all` first. See [LICENSE](LICENSE) and [NOTICE](NOTICE), and the [0.8.0 release notes](docs/releases/v0.8.0.md).
+agy-crew and agy-staff cannot coexist: both would show their skills to the agent and write the same per-repository state, so `agy-crew install` refuses to run when it finds agy-staff and prints how to remove it. There is no in-place upgrade; uninstall agy-staff, then install agy-crew. State in `.agy-staff/` is not migrated. To go back to upstream, run `agy-crew uninstall --all` first. See [LICENSE](LICENSE) and [NOTICE](NOTICE), and the [0.8.0](docs/releases/v0.8.0.md) and [0.9.0](docs/releases/v0.9.0.md) release notes.
 
 ## Community
 
@@ -228,7 +248,7 @@ A few things worth knowing before you open a PR:
 
 - **Run the tests**: `npm test`. The standard suite uses temporary repos and HOME directories with fake `agy`, plus focused module tests. Keep regression tests offline and independent of personal settings. Real AGY validation is a separate opt-in suite described in [tests/README.md](tests/README.md).
 - **Docs come in pairs**: `README.md` / `README.zh-CN.md` and `docs/REFERENCE.md` / `docs/REFERENCE.zh-CN.md` are kept in sync. Change one, change its counterpart.
-- **Runtime code lives in `companion/`**: the entrypoint handles modes and job commands; separate modules handle streaming execution, observations and state locking, product identity (`identity.mjs`) and the cross-harness installer (`install.mjs`). Skills call the companion, and `templates/` holds the shared prompts.
+- **Runtime code lives in `companion/`**: the entrypoint handles modes and job commands; separate modules handle streaming execution, observations and state locking, product identity (`identity.mjs`), the cross-harness installer (`install.mjs`) and the account pool (`accounts.mjs`, `pool/`). Skills call the companion, and `templates/` holds the shared prompts.
 - **Canonical skills are the source of truth**: edit personas in `skills/`, never in `pi-skills/` or `opencode-skills/`. Run `npm run generate:skills` to generate both host entrypoints, and `npm run check:skills` to verify consistency. The existing `generate:pi` and `check:pi` commands remain available. Use `npm run pack:checked` to check freshness before packing; publishing also runs the check.
 
 Adding a mode or a flag changes the public surface, so please open an issue first and we can agree on the shape.

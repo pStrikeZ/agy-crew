@@ -33,6 +33,7 @@ The command returns a job id. Read `../jobs/SKILL.md` for result collection and 
 - `--restricted` / `--unrestricted` — permission profile. research defaults to unrestricted, so it works out of the box with no setup. `--restricted` is the opt-in hardening path: agy runs without `--dangerously-skip-permissions` and may only use allowlisted tools, so it needs the setup flow's evidence-gathering allowlist to be useful — and some native agy tools ignore allow-rules headless, so restricted runs can still come back empty.
 - `--prompt <text>` / `--prompt-file <path>` / `--stdin` — the task, from exactly one of these three sources. Use file/stdin for long prompts.
 - `--timeout <dur>` — default 60m, maximum 120m hard execution limit.
+- `--account auto|live|<name>` — which agy account runs the task (default `auto`, the pool). See `../accounts/SKILL.md`.
 
 ## Rules
 

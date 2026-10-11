@@ -60,6 +60,8 @@ Wait/observe default to the latest job. Observe uses the same status exit codes,
 
 Continuation and restart may be invoked from the root or any subdirectory of the same worktree; execution returns to the original cwd. Generic `continue` fails for an unrecorded conversation ID. It does not search other worktrees or infer configuration from an unrelated conversation. For continuation, explicit model/profile flags override the inherited values.
 
+`status`, `result` and `observe` show the account that ran the job. A conversation stays bound to that account: `continue` reuses it, and a conflicting explicit `--account` is refused. `restart` starts a fresh conversation, so it selects an account again. Account management itself is in `../agy-crew-accounts/SKILL.md`.
+
 Cancel records a request first and returns success only after the worker has stored the cancellation report and published `canceled`. A crashed job keeps its crash diagnostics. A cancellation error requires inspection; it does not mean execution has stopped.
 
 ## Follow-up instructions
@@ -71,6 +73,14 @@ Use `continue --job <id>` to target an existing AGY conversation. It starts a ne
 - **Running, direction must change now:** cancel the active job, confirm termination, then continue with the updated brief. An already-authorized change of direction does not require another confirmation solely for this sequence.
 
 Include relevant decisions made in the host conversation, what changed, and what the worker should do next. After interruption, reconcile partial artifacts before repeating work: cancellation does not roll back edits, and the conversation may not contain the last interrupted step. If no usable conversation exists, start a fresh task with the updated brief and retained work. Timeout recovery still follows the rules below.
+
+## Quota and account failures
+
+With a pool configured, the companion handles quota inside the run: it records a cooldown for that account and model family, and either fails over to another account (when no conversation existed yet) or borrows an idle account's credential to continue the same conversation. Nothing for you to do when the job still finishes `done`.
+
+- **`quota_exhausted`** (status `attention`, exit 5, when a conversation exists; otherwise `error`) means no account could continue. The result and `observe` include `retry_at`. Report it, keep the job id, and offer `continue --job <id> --prompt "..."` after `retry_at`, or sooner once `accounts list` shows another account idle (a credential loan is then used automatically). Ask before continuing, as with a timeout. Never loop retries and never clear a cooldown yourself. Without a conversation, a new run with `--account auto`, `--account live` or another model family is the alternative; propose it to the user.
+- **`needs login`** (an authentication failure on a pool account) is not retried. Tell the user to run `agy-crew accounts login <name>` in their own terminal; it opens a browser, so you must not run it.
+- An unknown, disabled or cooling explicit `--account <name>` fails before launch with the reason; use `auto` or another account.
 
 ## Progress and recovery
 

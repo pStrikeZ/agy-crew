@@ -167,10 +167,21 @@ Probe the real CLI rather than trusting its documentation. Read its help, then m
 - Test the contract (states, exit codes, cancellation, recovery, snapshot bounds and the workspace audit), not model output.
 - Tests against the real CLI are opt-in and run separately.
 
-## 13. Non-goals
+## 13. Account pool
+
+agy-crew adds a layer the inherited design does not have: several credentials for one worker CLI. The pool follows these rules:
+
+- **The user's own login is never pooled.** The pool is an opt-in set of extra accounts. With none enabled, every behavior is the one that existed before the pool, which keeps the change safe to ship.
+- **One private home per account.** Each pool account is a separate HOME with its own file-backed token, so concurrent workers never share or overwrite a credential. Environment isolation is the only mechanism; the worker CLI is not modified.
+- **Selection is a pure function of recorded state.** Leases, cooldowns and cached quota snapshots in one locked file decide which account a run takes. Selection and lease acquisition happen in a single transaction, and leases of dead processes are reaped before every update.
+- **Quota is classified, recorded and never guessed.** A quota failure becomes a cooldown keyed by account and model family, with the reset time taken from the worker's own message. The network is touched only by an explicit refresh, never during dispatch.
+- **A conversation belongs to an account.** Its history lives in that account's home, so continuation stays there. When the account is cooling, an idle account may lend its credential for the duration of one run, with the files restored afterwards and by crash recovery.
+- **Sign-in stays with the human.** A browser login cannot be driven by a model, so the agent explains the command and the user runs it.
+
+## 14. Non-goals
 
 - No daemon, queue or scheduler. The host's own background execution is enough.
-- No automatic retry, continuation or restart.
+- No automatic retry, continuation or restart after a timeout or an error. The one exception is quota handling inside a single run, where the pool fails over to another account or borrows an idle credential; it is bounded, and any further continuation is still the host's decision.
 - No acceptance decisions. The host judges results.
 - No security boundary. Isolation comes from the permission profile, the checkout or the machine.
 - No routing between models or CLIs. Choosing a worker is the host's and the user's decision.

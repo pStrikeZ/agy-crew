@@ -39,7 +39,7 @@ Pi 加载的入口位于 `pi-skills/`，由 `npm run generate:pi` 根据 `skills
 | `unrestricted` | 传入 `--dangerously-skip-permissions`，允许读取文件、运行命令和修改工作区 | 任务边界依靠提示词约定和工作区检查，不能替代权限隔离 |
 | `restricted` | 保留 agy 的权限检查，未获准的工具调用会被拒绝 | 需要配置允许执行的命令；部分工具在非交互模式下仍可能无法使用 |
 
-`--restricted` 和 `--unrestricted` 不能同时传入。选择权限配置时，companion 先看显式参数；继续已有会话且没有显式覆盖时，继承该会话的权限配置。新任务则采用[仓库默认策略](#仓库级-policysetup---restrict)，没有策略时使用内置默认值。
+`--restricted` 和 `--unrestricted` 不能同时传入。选择权限配置时，companion 先看显式参数；继续已有会话且没有显式覆盖时，继承该会话的权限配置。新任务则采用[仓库默认策略](#按仓库设置默认权限)，没有策略时使用内置默认值。
 
 `setup` 提供的命令允许列表包含 `git gh cat head ls grep find rg wc`，主要用于读取和核对材料。如果没有相应规则，受限任务的工具调用可能全部被拒绝，最终只返回空回答。此外，部分 agy 原生工具在非交互模式下不遵循允许规则，因此即使配置了列表，受限任务也可能无法取得完整材料。
 
@@ -83,8 +83,6 @@ setup 保留宽泛的 `command(git)` / `command(gh)`，只为五个命令前缀�
 
 其次，配置文件是全局的，规则会影响这台机器上的其他 agy 任务。允许列表中没有单独的联网搜索规则；在项目测试过的 agy v1.1.13 中，`search_web` 无需这类规则就能在非交互模式下运行。
 
-<a id="仓库级-policysetup---restrict"></a>
-
 ### 按仓库设置默认权限
 
 如果某个仓库经常需要受限审查，可以为它设置默认策略，省去每次指定参数的步骤：
@@ -117,8 +115,9 @@ agy 还有与 `--project` 体系关联的项目级权限规则，可以将权限
 | `--model <id>` | 指定模型，可用 `agy models` 查看可用 ID。模型 ID 带有推理强度后缀，如 `gemini-3.8-flash-low`；companion 也能补全模型系列名与 `flash`、`pro` 别名，未知 ID 会在启动前报错 |
 | `--effort low\|medium\|high` | 指定推理强度，是 `gemini-3.8-flash-<effort>` 的简写 |
 | `--restricted` / `--unrestricted` | 覆盖本次运行的权限配置；`ask` 会忽略这两个参数 |
-| `--restrict <modes\|none>` | 用于 `setup`，设置或清除[仓库默认权限](#仓库级-policysetup---restrict) |
+| `--restrict <modes\|none>` | 用于 `setup`，设置或清除[仓库默认权限](#按仓库设置默认权限) |
 | `--json` | 用于代码审查，按指定结构返回 JSON 格式的问题列表；默认使用 Markdown |
+| `--account auto|live|<name>` | 指定运行任务的 agy 账号，默认取 `$AGY_CREW_ACCOUNT`，未设置则为 `auto`。`ask`、`staffer`、`research`、`review`、`implement`、`continue` 和 `restart` 都接受。见[账号池](#账号池) |
 | `--timeout <dur>` | 后台任务的执行时限，默认 60m，最长 120m；AGY 会收到相同的响应超时参数。同步 `ask` 的默认响应超时为 2m |
 | `--prompt <text>` | 将任务正文作为一个参数传入，通常需要用引号包住 |
 | `--prompt-file <path>` | 从文件读取任务正文，适合较长的描述 |
@@ -224,7 +223,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 ### 输出与本地记录
 
-标准输出保存任务结果，以及需要随结果展示的工作区警告。`[agy-crew]` 开头的运行信息记录模式、权限、模型、耗时、用量和会话 ID；前台运行时写入标准错误，后台运行时写入 `jobs/<id>.log`。这些信息供调用方排查问题，不属于回答正文，也不会写入 `jobs/<id>.result.md`。
+标准输出保存任务结果，以及需要随结果展示的工作区警告。`[agy-crew]` 开头的运行信息记录模式、权限、模型、耗时、用量、会话 ID 和账号；前台运行时写入标准错误，后台运行时写入 `jobs/<id>.log`。这些信息供调用方排查问题，不属于回答正文，也不会写入 `jobs/<id>.result.md`。
 
 仓库内的状态保存在 `<repo>/.agy-crew/`。`state.json` 记录会话和任务状态，更新时使用短事务锁；进度查询只读取状态。`config.json` 保存可选的仓库权限策略。
 
@@ -239,6 +238,137 @@ review --prompt "Review the patch at /tmp/change.patch"
 ### 避免将本地状态提交到 Git
 
 从 0.4 起，companion 首次在仓库中创建 `.agy-crew/` 时，会检查该目录是否已被忽略。如果没有，就将它加入本地的 `.git/info/exclude`。这样既能避免误提交任务记录，也不会改动团队共享的 `.gitignore`。
+
+## 账号池
+
+账号池让并发任务跑在不同的 agy 账号上，并按账号、按模型家族记录配额。它属于用户全局，不属于某个仓库。
+
+**两类账号。**
+
+- **live** 是你自己的 agy 登录（`os.homedir()`，凭据可能保存在系统凭据库中）。它永远不属于账号池：`auto` 不会选它，它不会借出凭据，也不会借用别人的。只有显式传入 `--account live`，或账号池里没有任何启用的账号时，才会使用它。因此账号池为空时，行为与 0.8.0 完全一致。
+- **池账号**是以名称标识的私有 HOME 目录，位于 `~/.agy-crew/accounts/<name>/home/`，其中的 `home/.gemini/antigravity-cli/antigravity-oauth-token` 是 agy 以文件形式保存的令牌。名称需匹配 `^[a-z0-9][a-z0-9._-]{0,31}$`，`live` 和 `auto` 为保留名。账号的邮箱取自令牌中的 `id_token`，同一个邮箱不能重复添加。
+
+池账号的每个 agy 进程都使用自己的 HOME（Windows 上还有 `USERPROFILE`），并带上 SSH 风格的环境变量标记（`SSH_CONNECTION`、`SSH_CLIENT`、`SSH_TTY`），让 agy 把令牌存进文件，而不是系统密钥环。live 运行沿用原有环境，不做改动。
+
+### 命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `accounts list [--json]` | 显示名称、邮箱、状态（`ready`、`busy n`、`cooling <family> until <time>`、`needs login`、`disabled`）、最近使用时间和缓存的配额摘要，并附一行 live：`live (your own agy login; never pooled)` |
+| `accounts login <name>` | 交互式登录：添加新账号，或为已有账号重新登录。见[登录](#登录) |
+| `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
+| `accounts quota [<name>...] [--refresh] [--json]` | 显示缓存的配额快照和冷却状态。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
+| `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
+| `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
+| `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |
+
+`--json` 输出机器可读的结果。这些命令成功时退出码为 0，出错时为 1。它们不会创建仓库内状态，因此可以在任意目录运行。
+
+### 登录
+
+`accounts login <name>` 是**交互式**的：agy 会打开浏览器登录。请在你自己的终端里运行，不要交给 agent。新账号先在暂存目录（`~/.agy-crew/enroll/<随机名>/home`）中登录，通过下面的检查后才移入正式位置；重新登录则在已有账号目录中进行，并先备份令牌（账号处于租约或借用中时会拒绝）。
+
+1. companion 先打印操作说明，再以当前终端运行 `agy --log-file <dir>/agy-crew-login.log`。看到 agy 提示符后退出 agy 即可。
+2. 日志中必须出现 `Using file-based token storage`，且令牌文件必须存在，否则登录失败（新账号会删除暂存目录，重新登录会恢复备份）。
+3. 邮箱与其他账号重复时失败。重新登录得到的邮箱必须与原来一致，否则失败并恢复备份。
+4. 新账号的 `settings.json` 权限会在 live 的设置文件存在时从中复制。登录成功后，该账号的 `needs login` 标记随之清除。
+
+### 为任务选择账号
+
+`staffer`、`research`、`review`、`implement`、`ask`、`continue` 和 `restart` 都接受 `--account auto|live|<name>`。默认取环境变量 `AGY_CREW_ACCOUNT`，未设置时为 `auto`。
+
+| 请求值 | 行为 |
+| --- | --- |
+| `live` | 使用你自己的登录 |
+| `<name>` | 使用该账号。账号不存在、已停用或需要登录时报错。若它在该模型家族上处于冷却，则报错并给出 `retry_at`，建议改用 `--account auto` 或其他模型家族 |
+| `auto` | 没有启用的池账号时用 live，否则按下面的规则挑选 |
+
+**`auto` 的选择规则。** 候选账号必须已启用、有令牌文件、没有认证错误、在该模型家族上没有生效的冷却，并且缓存的 Cloud Code 快照没有显示该家族所属配额池剩余为 0 且重置时间尚未到来。候选账号依次按以下条件排序：
+
+1. 当前租约最少（空闲账号优先于忙碌账号）；
+2. 已知的剩余配额比例最高（取短窗口和每周窗口中较小的一个；未知的排在所有已知且大于 0 的值之后）；
+3. `last_used_at` 最早；
+4. 添加顺序。
+
+没有候选账号时，任务以 `quota_exhausted` 失败，并列出每个账号最早的 `retry_at`，建议使用 `--account live` 或换一个模型。只有显式指定账号名，或者 `auto` 找不到空闲候选时，才会有多个任务共用同一个账号（选择负载最小的）。
+
+选择账号和写入租约在同一次加锁更新中完成，agy 进程结束后释放。进程已经退出的租约会被自动清理。
+
+**会话始终绑定到原来的账号。** 会话 ID 第一次出现时，会与账号建立绑定。`continue --job`、`--continue` 和 `--conversation` 使用绑定的账号；显式指定另一个账号会报错（`conversation <id> belongs to account <x>`）。账号池出现之前创建的会话视为 live。`restart` 会开启全新的会话，因此会重新选择账号。
+
+### 模型家族、配额池与冷却
+
+**模型家族**是去掉末尾推理强度后缀（`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）的模型 ID：`gemini-3.8-flash-low` 属于 `gemini-3.8-flash`。Cloud Code 把配额分成两个**配额池**：`gemini`（以 `gemini` 开头的家族）和 `other`。
+
+任务因 agy 的配额错误失败时（`RESOURCE_EXHAUSTED`，并带有 `Individual quota reached` 或 `Weekly quota reached`），companion 会记录一条**以账号和模型家族为键的冷却**。`retry_at` 为当前时间加上解析到的 `Resets in` 时长（由 `<n>d`、`h`、`m`、`s` 片段组成，如 `2h3m`、`1d 4h`、`45s`）；无法解析时加 **60 分钟**。冷却到期后自动失效，也可以用 `accounts cooldown clear` 清除。同一账号上的其他模型家族不受影响。
+
+随后任务按以下方式恢复，最多额外尝试 3 次：
+
+- **还没有会话 ID，且账号由 `auto` 选出**：释放租约，另选一个账号，用同一份提示词重试（故障转移）。
+- **已有会话 ID，且会话绑定在某个池账号上**：尝试凭据借用（见下文）。找到出借方时，任务带着这段提示继续："Your previous turn stopped because the account hit a quota limit. Continue the same task from where you stopped; do not repeat finished steps."
+- **其他情况任务失败**，原因为 `quota_exhausted`。后台任务在已有会话 ID 时状态为 `attention`，没有时为 `error`；结果中包含 `retry_at` 和恢复说明（`continue --job <id>`，在 `<retry_at>` 之后；其他池账号空闲时会自动借用凭据）。前台任务以相同信息退出：有会话 ID 时退出码为 5，否则为 1。是否继续由调用方决定，companion 不会循环重试。
+
+池账号上的**认证失败**（`401`、`403` 或 `unauthenticated`，并带有 auth、credential、login 或 token 字样）会记录该账号的认证错误。之后选择时会跳过它，`list` 显示 `needs login`，运行 `accounts login <name>` 后恢复。认证失败从不重试。
+
+### 凭据借用
+
+会话历史保存在所属账号的 HOME 中，但发出请求所用的凭据可以来自另一个账号。当会话绑定在池账号 B 上，而 B 在该模型家族上处于冷却时（无论是续跑开始时，还是运行中途遇到配额错误），companion 会借用空闲账号 L 的凭据：
+
+1. 出借方 L 的选择方式与 `auto` 候选相同，此外还要求它没有任何租约，也不在其他借用中。live 永远不出借。
+2. 在同一次加锁更新中记录借用：L 获得出借方租约，B 获得运行租约。
+3. 在 B 的令牌目录中，把 B 的令牌重命名为 `.antigravity-oauth-token.agy-crew.loan-backup`（仅在令牌存在时；已存在备份则放弃借用），再把 L 的令牌复制到 B 的令牌路径。
+4. agy 以 B 的 HOME 运行，因此能读到 B 的会话，而发出请求的是 L 的凭据。借用期间出现的配额冷却记在 L 名下。
+5. 结束后在 `finally` 中，把 B 当前的令牌（agy 可能已经刷新过）复制回 L 的令牌路径，删除 B 的令牌，再把备份改回原名，最后移除借用记录及其租约。
+
+**崩溃恢复。** 每次加锁更新之前都会先清理失效进程：进程已退出的租约会被丢弃，进程已退出的借用按同样的步骤恢复（出借方拿回刷新后的令牌，借用方的原始令牌也回到原位）。账号处于租约或借用中时，`accounts remove` 和 `accounts login` 会拒绝执行。
+
+### 配额快照
+
+不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会针对每个账号向 Google 的 Cloud Code 服务查询：
+
+1. 读取令牌。若访问令牌缺失，或将在 120 秒内过期，就用该账号的环境运行 `agy -p "reply with one word: pong" --output-format json` 预热（超时 60 秒），然后重新读取。
+2. 调用 `loadCodeAssist` 获取项目和套餐类型（失败时使用缓存的 `home/.gemini/antigravity-cli/cache/default_project_id.txt`），再调用 `retrieveUserQuotaSummary`。每个请求的超时为 20 秒。
+3. 把配额分组解析到 `gemini` 和 `other` 两个池，每个池各有短窗口（5h）和每周窗口，记录剩余比例和重置时间。
+4. 遇到 `401` 时先预热并重试一次；仍然失败就记录错误，并把该账号标记为 `needs login`。
+
+如果刷新后某个配额池的剩余量大于 0，该账号在此池内各模型家族的冷却会被清除。令牌不会被打印。**只有 `accounts quota --refresh` 会访问网络**，任务分发期间从不联网。
+
+### 环境变量
+
+| 变量 | 作用 |
+| --- | --- |
+| `AGY_CREW_ACCOUNT` | `--account` 的默认值（`auto`、`live` 或账号名） |
+| `AGY_CREW_HOME` | 移动全局目录 `~/.agy-crew/`，其中包括账号池及各账号 |
+| `AGY_CREW_CLOUDCODE_URL` | 替换 `accounts quota --refresh` 使用的默认地址 `https://cloudcode-pa.googleapis.com`（用于测试或代理） |
+
+### 状态目录
+
+```text
+~/.agy-crew/
+  pool.json                      全局账号池状态（schema 1）
+  pool.json.lock                 更新 pool.json 时使用的锁
+  accounts/<name>/home/          该账号的私有 HOME
+    .gemini/antigravity-cli/antigravity-oauth-token   文件形式的令牌（不会被打印）
+    .gemini/antigravity-cli/settings.json             该账号的权限设置
+  enroll/<随机名>/home/          首次登录期间的暂存目录
+```
+
+`pool.json` 包含 `accounts`（添加顺序是最后的排序依据）、`cooldowns`（键为 `<name>|<family>`）、`leases`、`conversations`（会话 ID 到账号的映射）、`loans` 和 `quota` 快照。写入是原子的，并且加锁。文件不存在等同于空池；文件损坏会报错，不会被自动重置；`schema` 比当前版本新时会拒绝使用（`pool.json was written by a newer agy-crew`）。
+
+### 设置与 `setup --apply`
+
+`setup --apply` 先把权限规则写入 live 的 `~/.gemini/antigravity-cli/settings.json`，再对每个池账号的 `home/.gemini/antigravity-cli/settings.json` 执行同样的合并，并逐一报告路径。预演（dry run）也会列出这些文件。新账号登录时，会从 live 的设置文件复制权限。
+
+### 失败原因与退出码
+
+| 情况 | 原因与输出 | 退出码 |
+| --- | --- | --- |
+| `auto` 没有候选账号，或运行中遇到配额错误且没有可借用的出借方 | `quota_exhausted`，附 `retry_at`（没有候选时按账号分别列出） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
+| 池账号认证失败 | 账号标记为 `needs login`，不重试 | 按普通错误处理 |
+| 显式指定的 `--account <name>` 不存在、已停用、处于冷却或需要登录 | 启动前报错并说明原因 | 1 |
+| `--account` 与已绑定的会话冲突 | `conversation <id> belongs to account <x>` | 1 |
+| `accounts` 子命令失败 | 错误信息输出到标准错误 | 1 |
+| `pool.json` 损坏，或由更新版本的 agy-crew 写入 | 拒绝运行 | 1 |
 
 ## 疑难排查
 
@@ -267,6 +397,10 @@ review --prompt "Review the patch at /tmp/change.patch"
 需要保留受限权限时，可以通过 `setup` 配置命令允许列表。如果你允许本次任务放宽权限，应显式传入 `--unrestricted`。仅删除 `--restricted` 不一定有效，因为继续会话时仍会继承原来的配置。部分工具在非交互模式下不接受允许规则，即使运行过 `setup` 也可能不可用。
 
 `ask` 不调用工具，因此不能用工具被拒绝解释它的空回答。`unrestricted` 任务的空回答也不能简单归因于权限；请保留诊断信息并报告问题。
+
+### 池账号配额用尽或需要登录
+
+池账号遇到配额错误时，companion 会记录冷却；如果还有其他账号，或有空闲账号可以出借凭据，任务会在运行内部恢复。否则任务以 `quota_exhausted` 结束，并附上 `retry_at`。认证失败不会重试：请在自己的终端里运行 `agy-crew accounts login <name>`。详见[账号池](#账号池)。
 
 ### 参数和任务被放进了同一个字符串
 
@@ -359,7 +493,7 @@ Windows 为尽力支持，由 CI 的 `Tests (Windows)` 任务覆盖，尚未在�
 }
 ```
 
-插件将包内 `opencode-skills/` 的绝对路径追加到 `skills.paths`，保留已有路径并避免重复注册。OpenCode 会发现七个带品牌前缀的技能，并提供同名原生斜杠命令：`/agy-crew-ask`、`/agy-crew-staffer`、`/agy-crew-researcher`、`/agy-crew-reviewer`、`/agy-crew-implementer`、`/agy-crew-jobs` 和 `/agy-crew-lead`。无需额外命令包装，已有 OpenCode 技能权限仍然适用。
+插件将包内 `opencode-skills/` 的绝对路径追加到 `skills.paths`，保留已有路径并避免重复注册。OpenCode 会发现八个带品牌前缀的技能，并提供同名原生斜杠命令：`/agy-crew-ask`、`/agy-crew-staffer`、`/agy-crew-researcher`、`/agy-crew-reviewer`、`/agy-crew-implementer`、`/agy-crew-jobs`、`/agy-crew-accounts` 和 `/agy-crew-lead`。无需额外命令包装，已有 OpenCode 技能权限仍然适用。
 
 `npm run generate:opencode` 从唯一方法源 `skills/` 生成入口，复制所有资源、改写调用方式与相对路径，并附上与 Pi 相同的主环境兼容说明。companion 与提示词模板继续共用。请安装完整包；单独复制插件文件会缺失相对路径引用的资源。
 
@@ -424,11 +558,11 @@ agy-crew 与上游 [agy-staff](https://github.com/keli-wen/agy-staff) 不能安�
 
 ### 权限配置
 
-`setup` 在 0.8.0 中没有变化：它仍然修改全局的 `~/.gemini/antigravity-cli/settings.json`。按仓库保存的策略文件是 `.agy-crew/config.json`。
+`setup` 仍然修改全局的 `~/.gemini/antigravity-cli/settings.json`；从 0.9.0 起，`setup --apply` 还会对每个池账号自己的 `settings.json` 做同样的权限合并（见[设置与 `setup --apply`](#设置与-setup---apply)）。按仓库保存的策略文件是 `.agy-crew/config.json`。
 
 ## 升级
 
-Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.8.0`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
+Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.0`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
 
 ### 终端命令（`agy-crew install`）
 
@@ -464,6 +598,8 @@ Pi 的 Git 安装跟随所配置的分支或引用，本地路径安装则直接
 companion/agy-companion.mjs    命令入口、模式选择、任务管理与 setup
 companion/identity.mjs         产品标识常量（名称、前缀、状态目录、AGY_CREW_HOME）
 companion/install.mjs          `agy-crew install` / `uninstall` 背后的跨 harness 安装器
+companion/accounts.mjs         `accounts` 子命令
+companion/pool/                账号池：状态、选择、借用、配额、结果分类与隔离环境
 companion/stream-worker.mjs    AGY 流式执行、进程清理与执行时限
 companion/observation.mjs      事件解析、进度快照与输出长度限制
 companion/state-lock.mjs       状态更新与锁回收

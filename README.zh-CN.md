@@ -12,7 +12,7 @@
 
 ![设计图](assets/design.png)
 
-**[安装](#安装) · [使用示例](#使用) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级](#升级) · [与 agy-staff 的关系](#与-agy-staff-的关系)**
+**[安装](#安装) · [使用示例](#使用) · [账号池](#账号池) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级](#升级) · [与 agy-staff 的关系](#与-agy-staff-的关系)**
 
 ## 它适合做什么
 
@@ -28,7 +28,7 @@ agy-crew 保留了 agy-staff 的角色、后台任务，以及“bash 加 skills
 
 1. 终端命令 `agy-crew` 和 `install` 命令：从同一份共享 bundle 把技能装进检测到的每个 harness，取代各 harness 自己的插件缓存；
 2. 与上游 agy-staff 严格互斥（安装器发现它时拒绝运行）；
-3. **账号池**：让并发任务跑在不同的 agy 账号上，并按账号、按模型家族感知配额。这部分**计划在后续版本中提供，目前尚不可用**。
+3. **账号池**：让并发任务跑在不同的 agy 账号上，并按账号、按模型家族感知配额（见[账号池](#账号池)）。
 
 `-crew` 后缀与作者的 `codex-staff` 对应：`-staff` 是单账号委派，`-crew` 是账号池。
 
@@ -109,7 +109,7 @@ codex plugin add agy-crew@agy-crew
 opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global
 ```
 
-重启 OpenCode 后运行 `/agy-crew-ask reply with OK`。插件会自动注册七个 `agy-crew-*` 技能及其原生斜杠命令，包括 `/agy-crew-lead` 和 `/agy-crew-jobs`，无需单独配置技能路径或命令包装。仍需安装 Node.js，并完成 `agy` 登录。
+重启 OpenCode 后运行 `/agy-crew-ask reply with OK`。插件会自动注册八个 `agy-crew-*` 技能及其原生斜杠命令，包括 `/agy-crew-lead`、`/agy-crew-jobs` 和 `/agy-crew-accounts`，无需单独配置技能路径或命令包装。仍需安装 Node.js，并完成 `agy` 登录。
 
 OpenCode 按完整包规格缓存；仅重启不会刷新相同的 Git 规格。升级时选择新的 Git 标签或提交，运行 `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`，然后重启。配置与本地开发方式见[参考手册](docs/REFERENCE.zh-CN.md#opencode)。此适配器不覆盖 OpenCode V2。
 
@@ -158,6 +158,26 @@ install and verify the agy-crew plugin for the harness you are running in. Respo
 使用 `reviewer` 时，直接说明审查对象即可。agy 会自行调用 `gh pr view`、`git diff` 等命令收集材料，也可以读取指定文件。代码审查会按严重程度列出问题；方案和决策审查则会检查假设、取舍和可能遗漏的情况。
 
 `staffer` 没有预设的专业分工，因此也适合调用其他角色没有专门介绍的 agy 原生工具，例如 `generate_image`。项目曾在 agy v1.1.15 上验证图像生成：一次调用约 30 秒生成了 1024×1024 的 PNG。这个记录可以作为使用示例，实际耗时取决于任务和运行环境。
+
+## 账号池
+
+一个 agy 登录只有一份配额：并发任务只能排队，常用模型也容易被用完。账号池让后台任务同时跑在多个 agy 账号上，并按账号、按模型家族记录配额。
+
+快速开始：
+
+```bash
+agy-crew install                    # 如上
+agy-crew accounts login work1       # 会打开浏览器登录；请在你自己的终端里运行
+agy-crew accounts list              # work1 显示为 ready
+```
+
+之后每次运行都会自动选择账号（默认就是 `--account auto`）：优先选空闲账号，其次选已知剩余配额最多的。想要更多账号，换个名字再执行一次 `login` 即可。你自己的 agy 登录（**live**）永远不属于账号池：`auto` 不会用它，它也不会借出凭据。只有显式传入 `--account live`，或账号池里没有任何启用的账号时才会用到它，所以账号池为空时一切照旧。
+
+账号触及配额上限时，companion 会为该账号和模型家族记录冷却，直到 agy 报告的重置时间，没有报告则为 60 分钟。尚未开始会话的任务会转到另一个账号；已经在会话中的任务仍绑定原账号，因为会话历史保存在那里。如果该账号正在冷却，就由一个空闲账号在本次运行中出借凭据，结束后令牌文件会还原，崩溃后也会恢复。所有账号都无法继续时，任务以 `quota_exhausted` 结束并给出 `retry_at`，由你决定何时 `continue`。`agy-crew accounts quota --refresh` 会向 Google 的 Cloud Code 服务查询当前配额，这是唯一会联网的命令。
+
+已经有账号了？`agy-crew accounts import work2 --home <dir>` 会从现有的 HOME 形态目录复制令牌，例如 agy-cli-manager 的账号目录。其他子命令：`enable`、`disable`、`cooldown clear`、`remove --yes`。完整说明见[参考手册](docs/REFERENCE.zh-CN.md#账号池)。
+
+现在，并行任务的数量大致以就绪账号数为宜。账号池为空时，所有任务都跑在你的 live 登录上。
 
 ## 核心设计
 
@@ -213,9 +233,9 @@ codex plugin marketplace upgrade && codex plugin add agy-crew@agy-crew
 
 agy-crew 是 Keli Wen 的 [agy-staff](https://github.com/keli-wen/agy-staff) v0.7.4 的 fork，采用相同的 MIT 许可证。版本号延续 agy-staff 的历史（本 fork 从 0.8.0 开始）。
 
-改动内容：全面重命名（插件 id `agy-crew@agy-crew`，仓库内状态目录 `.agy-crew/`，运行信息前缀 `[agy-crew]`，错误前缀 `agy-crew error:`）；新增终端命令和跨 harness 的 `install`；账号池仍在计划中。上游的改动在适用时会继续合并进来。
+改动内容：全面重命名（插件 id `agy-crew@agy-crew`，仓库内状态目录 `.agy-crew/`，运行信息前缀 `[agy-crew]`，错误前缀 `agy-crew error:`）；新增终端命令和跨 harness 的 `install`（0.8.0），以及账号池（0.9.0）。上游的改动在适用时会继续合并进来。
 
-agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面前，并写入同一份仓库状态，因此发现 agy-staff 时，`agy-crew install` 会拒绝运行并说明如何移除。没有原地升级：先卸载 agy-staff，再安装 agy-crew；`.agy-staff/` 中的状态不会迁移。想换回上游，请先运行 `agy-crew uninstall --all`。详见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [0.8.0 发布说明](docs/releases/v0.8.0.md)。
+agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面前，并写入同一份仓库状态，因此发现 agy-staff 时，`agy-crew install` 会拒绝运行并说明如何移除。没有原地升级：先卸载 agy-staff，再安装 agy-crew；`.agy-staff/` 中的状态不会迁移。想换回上游，请先运行 `agy-crew uninstall --all`。详见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 、[0.8.0](docs/releases/v0.8.0.md) 和 [0.9.0](docs/releases/v0.9.0.md) 发布说明。
 
 ## 社区
 
@@ -227,7 +247,7 @@ agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面�
 
 提交代码前请运行 `npm test`。标准测试使用临时仓库、临时 HOME 和假的 agy，不会调用真实模型或改动你的个人配置。新增回归测试也应保持这一点。需要验证真实 AGY 时，请使用[测试说明](tests/README.md)中单独启用的集成测试。
 
-运行逻辑位于 `companion/`：入口负责模式和任务命令，独立模块负责流式执行、进度快照、状态锁、产品标识（`identity.mjs`）和跨 harness 安装器（`install.mjs`）。角色技能位于 `skills/`，共享的提示词模板位于 `templates/`。修改技能时请以 `skills/` 为准，再运行 `npm run generate:skills` 生成 `pi-skills/` 与 `opencode-skills/`，用 `npm run check:skills` 检查一致性。不要直接编辑生成文件；原有 `generate:pi` 和 `check:pi` 命令仍然可用。打包时使用 `npm run pack:checked`，先检查一致性再生成归档；发布前也会自动检查。
+运行逻辑位于 `companion/`：入口负责模式和任务命令，独立模块负责流式执行、进度快照、状态锁、产品标识（`identity.mjs`）、跨 harness 安装器（`install.mjs`）和账号池（`accounts.mjs`、`pool/`）。角色技能位于 `skills/`，共享的提示词模板位于 `templates/`。修改技能时请以 `skills/` 为准，再运行 `npm run generate:skills` 生成 `pi-skills/` 与 `opencode-skills/`，用 `npm run check:skills` 检查一致性。不要直接编辑生成文件；原有 `generate:pi` 和 `check:pi` 命令仍然可用。打包时使用 `npm run pack:checked`，先检查一致性再生成归档；发布前也会自动检查。
 
 README 和参考手册都有中英文版本。修改使用方法或行为说明时，请同步更新对应版本，让两种语言的读者得到一致的信息。
 

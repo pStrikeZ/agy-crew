@@ -22,8 +22,14 @@ The fail-closed signature of a restricted run: headless agy auto-denies every un
 
 When agy reports an error but response text came back, the companion delivers the response anyway: exit 0, response on stdout, warning on stderr (retained in the job log and included as a bounded tail during background result collection). Assess the response against the task and review the diagnostics before deciding whether more work is needed. An empty response at a deadline with a known conversation instead needs attention (exit 5); other empty responses remain failures.
 
+## Quota exhausted and needs login (account pool)
+
+`reason=quota_exhausted` with a `retry_at` means the account (and any idle account that could lend a credential) hit its quota for that model family. Failover and credential loans have already been tried inside the run, so do not retry in a loop. Offer `continue --job <id>` after `retry_at`, or when `accounts list` shows an idle account; with no conversation, offer a new run with another `--account` or model family. `accounts quota --refresh` shows current numbers when the user wants them.
+
+An authentication failure on a pool account marks it `needs login` and is never retried. The user must run `agy-crew accounts login <name>` in their own terminal (browser sign-in); do not run it yourself. Live authentication failures still mean running `agy` interactively once.
+
 ## Retry rules
 
 - Do not retry with different flags unless the error message itself names the exact flag.
 - For a timeout, inspect the retained result and workspace. Exit 5 means the conversation is resumable: ask the user whether to continue with the suggested timeout or stop, and recover only after explicit confirmation. Background `--timeout` defaults to 60m and accepts at most 120m; increase it only below that ceiling, otherwise narrow the task. A known conversation ID lets `continue` resume with its recorded configuration. A response already received before the hard deadline is delivered with a warning, so do not restart a completed job merely because cleanup timed out.
-- Model-id errors fail pre-flight with the valid ids in the message (`agy models` lists them); expired auth means running `agy` interactively once to re-login.
+- Model-id errors fail pre-flight with the valid ids in the message (`agy models` lists them); expired auth means running `agy` interactively once to re-login (for a pool account, `agy-crew accounts login <name>`).

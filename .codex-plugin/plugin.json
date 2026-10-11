@@ -1,6 +1,6 @@
 {
   "name": "agy-crew",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Delegate work to Google's Antigravity CLI (agy) across a pool of accounts - five personas: staffer (general), researcher, reviewer (code and plans), implementer, ask. A fork of agy-staff.",
   "author": {
     "name": "pStrikeZ",

@@ -165,7 +165,25 @@ Apply only after the user explicitly agrees. If they decline, nothing is lost fr
 
 If the user is security-sensitive and the machine-wide scope is unacceptable, tell them agy also supports project-scoped permission rules (highest priority) tied to its `--project` system — but that **the project-settings file path is undocumented and unverified against the current agy release**. Do not guess a path and do not write one; point them at [REFERENCE.md → Advanced: project-scoped permissions](REFERENCE.md#advanced-project-scoped-permissions) and let them verify it interactively with `agy`.
 
-## 5. The execution model
+## 5. Optional — the account pool
+
+Skip this section unless the user wants concurrent jobs on several agy accounts. Without it everything runs on the user's own agy login (**live**), exactly as before; live is never part of the pool.
+
+Never run `accounts login` yourself. It opens a browser sign-in and waits for the user to exit agy, so only the user can complete it. Offer it, and if they agree give them the command to run in their own terminal:
+
+```bash
+agy-crew accounts login work1     # choose any name: lowercase letters, digits, . _ -
+```
+
+Without the command on PATH, use `node <plugin-root>/companion/agy-companion.mjs accounts login work1`. Repeat with another name for each account (each must be a different Google account). If the user already has agy homes from agy-cli-manager, `agy-crew accounts import <name> --home <dir>` copies the token without a browser; ask before importing. Afterwards you can verify without side effects:
+
+```bash
+agy-crew accounts list            # each account should show "ready"
+```
+
+Runs then choose an account automatically (`--account auto`). New accounts copy their permission settings from the live settings file on login, and a later `setup --apply` updates every pool account. Details: [REFERENCE.md → Accounts](REFERENCE.md#accounts).
+
+## 6. The execution model
 
 `ask` returns its answer synchronously. `staffer`, `research`, `review` and `implement` return a job id, and the job-start output prints the exact collect command (`wait <id> --timeout 10m`). Run that as a background command — one background wait per job — and deliver the result when it exits; exit code 2 means still running, so run the same `wait` again (`cancel <id>` stops the job). Do not leave a started job unreported.
 
@@ -173,9 +191,9 @@ Exit 5 signals a timeout with a resumable conversation. Inspect the retained wor
 
 Per-repo state lives in `<repo>/.agy-crew/`; the companion git-ignores it automatically on first use (via `.git/info/exclude` — the tracked `.gitignore` is never touched).
 
-## 6. Report back
+## 7. Report back
 
-Tell the user, in **their** language: whether install succeeded (name the version and whether it came from the GitHub slug or a local checkout, and whether you used route A or route B), the smoke-test result, whether a restart is still needed before the skills load, and whether the optional setup rules were applied, declined, or never offered (the default unrestricted profile does not need it).
+Tell the user, in **their** language: whether install succeeded (name the version and whether it came from the GitHub slug or a local checkout, and whether you used route A or route B), the smoke-test result, whether a restart is still needed before the skills load, and whether the optional setup rules were applied, declined, or never offered (the default unrestricted profile does not need it), and whether any pool accounts were added (and that the user, not you, ran the login).
 
 Default: prepare the prompt, dispatch, wait for the final result, then validate as needed. On wait exit 2, wait again for the same job without extra progress checks. While running, do not proactively observe, read logs or inspect intermediate artifacts, including for routine updates. Observe only when the user explicitly asks for progress; diagnose after a failure or a result requiring intervention. Host collection of a pending wait command is necessary result collection, not active observation. Prefer background completion delivery or the longest practical blocking wait the host supports; avoid short empty polls and sleep/observe loops. The worker's hard limit and explicit recovery protocol remain separate from wait soft expiry.
 

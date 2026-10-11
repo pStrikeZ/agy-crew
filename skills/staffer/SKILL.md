@@ -36,6 +36,7 @@ The command returns a job id. Read `../jobs/SKILL.md` for result collection and 
 - `--model <id>` or `--effort low|medium|high` — default model is `gemini-3.8-flash-medium`.
 - `--restricted` / `--unrestricted` — permission profile; staffer defaults to unrestricted like the other tool-using personas, `--restricted` is the opt-in hardening path.
 - `--continue` (or `--conversation <id>`), `--timeout <dur>` (default 60m, maximum 120m hard execution limit).
+- `--account auto|live|<name>` — which agy account runs the task (default `auto`, the pool). See `../accounts/SKILL.md`.
 
 ## Rules
 

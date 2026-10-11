@@ -114,6 +114,7 @@ Caveat, stated plainly: **the exact project-settings file path is undocumented a
 | `--restricted` / `--unrestricted` | permission profile override (ignored by `ask`). `unrestricted` is the default for `staffer`/`research`/`review`/`implement`, so `--restricted` is the flag you actually reach for |
 | `--restrict <modes\|none>` | (setup) per-repo policy: the listed modes default to restricted in this repository; `none` clears it. See [Per-repo policy](#per-repo-policy-setup---restrict) |
 | `--json` | (review) schema-enforced JSON findings; default is free-form markdown. Meant for the code-review flavor |
+| `--account auto|live|<name>` | which agy account runs the task (default `$AGY_CREW_ACCOUNT`, else `auto`). Accepted by `ask`, `staffer`, `research`, `review`, `implement`, `continue` and `restart`. See [Accounts](#accounts) |
 | `--timeout <dur>` | Background worker hard limit (default 60m, maximum 120m). AGY receives the selected response timeout. For synchronous ask: AGY response timeout, default 2m |
 | `--prompt <text>` | the task text as one argument. Quote it; whatever is inside is opaque |
 | `--prompt-file <path>` | read the task text from a file — for long prompts, instead of shell quoting |
@@ -139,7 +140,7 @@ Giving two at once is an error (`task text given more than one way (…) — use
 
 `--prompt` accepts a value that starts with `--` when it is a real sentence, meaning one that contains whitespace: `ask --prompt "--check means what?"` works. A flag-shaped value with no whitespace reads as a forgotten value and is rejected. `--` itself carries no special meaning; it parses as an unknown flag.
 
-Value flags (`--conversation`, `--model`, `--effort`, `--timeout`, `--restrict`, `--prompt`, `--prompt-file`) require a value. A missing one, an empty one, and — apart from the `--prompt` sentences above — a flag-shaped one are all errors, so `--model ""` is an error.
+Value flags (`--conversation`, `--model`, `--effort`, `--timeout`, `--restrict`, `--account`, `--prompt`, `--prompt-file`) require a value. A missing one, an empty one, and — apart from the `--prompt` sentences above — a flag-shaped one are all errors, so `--model ""` is an error.
 
 Each flag is its own argument. Flags packed into a single quoted string (`review "--restricted Review PR #730"`) are an error that names the fix rather than a guess at where the flags end and the task begins.
 
@@ -160,7 +161,7 @@ The review template itself is a neutral skeleton (reviewer stance, evidence disc
 
 ## State and background jobs
 
-**Output split.** stdout carries the result and any guard warning about the working tree; the `[agy-crew]` telemetry line (mode, profile, model, duration, tokens, conversation id) goes to stderr, and for background jobs into `jobs/<id>.log`. Telemetry is metadata for the calling agent — it is not part of the deliverable and is not stored in `jobs/<id>.result.md`.
+**Output split.** stdout carries the result and any guard warning about the working tree; the `[agy-crew]` telemetry line (mode, profile, model, duration, tokens, conversation id, account) goes to stderr, and for background jobs into `jobs/<id>.log`. Telemetry is metadata for the calling agent — it is not part of the deliverable and is not stored in `jobs/<id>.result.md`.
 
 `staffer`, `research`, `review` and `implement` return stable job handles promptly. Default flow: prepare the prompt, dispatch, wait for the final result, then validate as needed. While running, do not proactively observe, read logs or inspect intermediate artifacts, including for routine updates. Observe progress only when the user explicitly asks; diagnose after a failure or a result requiring intervention. Each detached worker continuously drains AGY `stream-json`, even with no observers. There is no additional daemon or scheduler.
 
@@ -189,9 +190,141 @@ After warning-free success, results and metadata become durable before the raw s
 
 Automatic since 0.4: when the companion creates `.agy-crew/` for the first time in a repo, it appends `.agy-crew/` to `.git/info/exclude` (repo-local, untracked) unless the path is already ignored. It never touches the tracked `.gitignore` — the state directory is local scratch, and adding it to a shared, committed file would change the repo for everyone else.
 
+## Accounts
+
+The account pool lets concurrent jobs run on different agy accounts and tracks quota per account and per model family. It is global to the user, not per repository.
+
+**Two kinds of account.**
+
+- **live** is the user's own agy login (`os.homedir()`, whose credential may sit in the OS credential store). It is never part of the pool: `auto` never picks it, it never lends a credential and never borrows one. It is used only when requested with `--account live`, or when the pool has no enabled account. An empty pool therefore behaves exactly as 0.8.0 did.
+- **Pool accounts** are named, private HOME directories at `~/.agy-crew/accounts/<name>/home/`, each holding a file-backed agy token at `home/.gemini/antigravity-cli/antigravity-oauth-token`. Names match `^[a-z0-9][a-z0-9._-]{0,31}$`; `live` and `auto` are reserved. An account's email is read from the token's `id_token`, and the same email cannot be added twice.
+
+Every agy process for a pool account runs with its own HOME (and `USERPROFILE` on Windows) plus SSH-style environment markers (`SSH_CONNECTION`, `SSH_CLIENT`, `SSH_TTY`) that make agy store its token in a file instead of the OS keyring. Live runs use the unchanged environment.
+
+### Commands
+
+| Command | Effect |
+|---|---|
+| `accounts list [--json]` | Name, email, state (`ready`, `busy n`, `cooling <family> until <time>`, `needs login`, `disabled`), last use and cached quota summary, plus a line for live: `live (your own agy login; never pooled)` |
+| `accounts login <name>` | Interactive sign-in for a new account, or a re-login of an existing one. See [Login](#login) |
+| `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory. Same email and duplicate checks as login. Refuses the live home |
+| `accounts quota [<name>...] [--refresh] [--json]` | Print cached quota snapshots and cooldowns. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
+| `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
+| `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
+| `accounts remove <name> [--yes]` | Without `--yes`, print what would be deleted and exit 0. With `--yes`, delete the account directory, its cooldowns, quota snapshot and conversation bindings, and report how many conversations became unusable. Refused while the account is in a lease or loan |
+
+`--json` prints machine-readable output. These commands exit 0 on success and 1 on error. They never create per-repository state, so they work from any directory.
+
+### Login
+
+`accounts login <name>` is **interactive**: agy opens a browser sign-in. Run it in your own terminal, not through an agent. A new account is enrolled in a staging directory (`~/.agy-crew/enroll/<random>/home`) and moved into place only after it passes the checks below; a re-login works inside the existing account directory after backing up its token (and is refused while the account is in a lease or loan).
+
+1. The companion prints instructions, then runs `agy --log-file <dir>/agy-crew-login.log` with the terminal attached. Exit agy once its prompt appears.
+2. The log must contain `Using file-based token storage`, and the token file must exist. Otherwise the login fails (a new account's staging directory is deleted; a re-login restores the backup).
+3. A duplicate email of another account fails. A re-login must yield the same email as before, or it fails and restores the backup.
+4. A new account's `settings.json` permissions are seeded from the live settings file when it exists. A successful login clears the account's `needs login` marker.
+
+### Choosing an account for a run
+
+`staffer`, `research`, `review`, `implement`, `ask`, `continue` and `restart` accept `--account auto|live|<name>`. The default is the `AGY_CREW_ACCOUNT` environment variable, then `auto`.
+
+| Request | Behaviour |
+|---|---|
+| `live` | The user's own login |
+| `<name>` | That account. Fails if it is unknown, disabled or needs login. If it is cooling for the model family, fails with its `retry_at` and a suggestion to use `--account auto` or another model family |
+| `auto` | With no enabled pool account, live. Otherwise the best candidate below |
+
+**Selection ranking for `auto`.** A candidate is an enabled account with a token file, no authentication error, no active cooldown for the model family, and no cached Cloud Code snapshot reporting zero remaining quota for the family's quota pool with a reset time in the future. Candidates are ranked by:
+
+1. fewest active leases (an idle account beats a busy one);
+2. highest known remaining quota fraction (the lower of the short and weekly windows; unknown ranks after any known value above zero);
+3. oldest `last_used_at`;
+4. insertion order.
+
+If there is no candidate, the run fails with reason `quota_exhausted`, listing each account's earliest `retry_at` and suggesting `--account live` or another model. Concurrent runs share one account only when it is named explicitly, or when `auto` finds no idle candidate (the least-loaded account wins).
+
+Selection and the lease that marks the account busy are taken in one locked update, and released when the agy process ends. A lease whose process died is dropped automatically.
+
+**Conversations stay bound to their account.** The first time a conversation id appears, it is recorded against the account. `continue --job`, `--continue` and `--conversation` use the bound account; naming a different one is an error (`conversation <id> belongs to account <x>`). Conversations created before the pool existed are treated as live. `restart` creates a fresh conversation, so it selects an account again.
+
+### Model families, quota pools and cooldowns
+
+A **model family** is the model id without its trailing effort suffix (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`): `gemini-3.8-flash-low` belongs to `gemini-3.8-flash`. Cloud Code reports quota in two **quota pools**: `gemini` (families starting with `gemini`) and `other`.
+
+When a run fails with agy's quota error (`RESOURCE_EXHAUSTED` together with `Individual quota reached` or `Weekly quota reached`), the companion records a **cooldown keyed by account and model family**. `retry_at` is the current time plus the parsed `Resets in` text (a sequence of `<n>d`, `h`, `m`, `s` tokens such as `2h3m`, `1d 4h` or `45s`), or plus **60 minutes** when the text cannot be parsed. Cooldowns expire on their own and can be cleared with `accounts cooldown clear`. Other families on the same account stay usable.
+
+The run then recovers, with at most three extra attempts:
+
+- **No conversation id yet and the account was chosen by `auto`**: the lease is released, another account is chosen and the same prompt is retried (failover).
+- **A conversation id is known and the conversation is bound to a pool account**: a credential loan is attempted (below). If a lender exists, the run continues with the prompt "Your previous turn stopped because the account hit a quota limit. Continue the same task from where you stopped; do not repeat finished steps."
+- **Otherwise the run fails** with reason `quota_exhausted`. A background job gets status `attention` when a conversation id exists and `error` when none does; its result includes `retry_at` and recovery text (`continue --job <id> after <retry_at>`; a credential loan is used automatically once another pool account is idle). A foreground run dies with the same information, exit 5 when a conversation id exists, otherwise 1. Further continuation is the caller's decision; the companion does not loop.
+
+An **authentication failure** on a pool account (`401`, `403` or `unauthenticated` together with auth, credential, login or token wording) sets the account's auth error. Selection skips it, `list` shows `needs login`, and `accounts login <name>` clears it. Authentication failures are never retried.
+
+### Credential loans
+
+A conversation's history lives in its account's HOME, but the credential that makes the request can come from another account. When a conversation is bound to pool account B and B is cooling for the model family, either at continuation start or after a quota failure mid-run, the companion borrows an idle account L's credential:
+
+1. L is chosen like an `auto` candidate but must also hold no lease and not be in a loan. Live never lends.
+2. In one locked update the loan is recorded, with a lender lease on L and a run lease on B.
+3. In B's token directory, B's token is renamed to `.antigravity-oauth-token.agy-crew.loan-backup` (only when it exists; a pre-existing backup aborts the loan), and L's token is copied to B's token path.
+4. agy runs with B's HOME, so it sees B's conversation while L's credential makes the request. A quota cooldown during a loan is recorded against L.
+5. Afterwards, in a `finally`, B's current token (agy may have refreshed it) is copied back to L's token path, B's token is deleted, and the backup is renamed back. Then the loan and its leases are dropped.
+
+**Crash recovery.** Every locked update first reaps dead processes: leases whose pid is gone are dropped, and a loan whose pid is gone is restored by the same steps (so the lender's token gets the refreshed content and the borrower's original token returns). `accounts remove` and `accounts login` refuse while the account is in a lease or loan.
+
+### Quota snapshots
+
+`accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, per account:
+
+1. Read the token. If the access token is missing or expires within 120 seconds, warm up by running `agy -p "reply with one word: pong" --output-format json` with the account's environment (60 s timeout), then reread it.
+2. Call `loadCodeAssist` to learn the project and plan type (falling back to the cached `home/.gemini/antigravity-cli/cache/default_project_id.txt`), then `retrieveUserQuotaSummary`. Each request has a 20 s timeout.
+3. Parse the quota groups into the `gemini` and `other` pools, each with a short (5h) and a weekly window: remaining fraction and reset time.
+4. On `401` the account is warmed up once and retried; if it still fails, the error is recorded and the account is marked `needs login`.
+
+A refreshed snapshot with remaining quota above zero for a pool clears that account's cooldowns for the families in that pool. Tokens are never printed. **Network access happens only in `accounts quota --refresh`**, never during dispatch.
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `AGY_CREW_ACCOUNT` | Default for `--account` (`auto`, `live` or an account name) |
+| `AGY_CREW_HOME` | Moves the global directory `~/.agy-crew/`, including the pool and its accounts |
+| `AGY_CREW_CLOUDCODE_URL` | Replaces the default `https://cloudcode-pa.googleapis.com` base URL for `accounts quota --refresh` (tests, proxies) |
+
+### State layout
+
+```
+~/.agy-crew/
+  pool.json                      global pool state (schema 1)
+  pool.json.lock                 lock for pool.json updates
+  accounts/<name>/home/          the account's private HOME
+    .gemini/antigravity-cli/antigravity-oauth-token   file-backed token (never printed)
+    .gemini/antigravity-cli/settings.json             permissions for this account
+  enroll/<random>/home/          staging directory during a first login
+```
+
+`pool.json` holds `accounts` (insertion order is the final tie-break), `cooldowns` (keyed `<name>|<family>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
+
+### Settings and `setup --apply`
+
+`setup --apply` writes the usual permission rules to the live `~/.gemini/antigravity-cli/settings.json` and then applies the same merge to every pool account's `home/.gemini/antigravity-cli/settings.json`, reporting each path. The dry run lists those files too. New accounts seed their permissions from the live settings file on login.
+
+### Failure reasons and exit codes
+
+| Situation | Reason / output | Exit |
+|---|---|---|
+| No `auto` candidate, or quota hit mid-run with no lender | `quota_exhausted`, with `retry_at` (per account when no candidate) | 5 when a conversation id exists, otherwise 1; a background job ends `attention` or `error` accordingly |
+| Authentication failure on a pool account | account marked `needs login`; never retried | follows the normal error path |
+| Explicit `--account <name>` that is unknown, disabled, cooling or needs login | error before launch naming the reason | 1 |
+| `--account` conflicting with a bound conversation | `conversation <id> belongs to account <x>` | 1 |
+| `accounts` subcommand failure | error on stderr | 1 |
+| `pool.json` corrupt or from a newer agy-crew | refuses to run | 1 |
+
 ## Troubleshooting
 
 - **"agy reported an error (status ERROR)"** — the companion relays agy's own error verbatim, and appends a cause hint only when the error text actually matches one (invalid model id → run `agy models`; expired auth → run `agy` interactively once to re-login; exhausted quota). If agy reported an error but still returned response text, the companion delivers the response anyway — exit 0, response on stdout, warning on stderr (`done_with_warnings`); a deadline with no response but a known conversation instead signals attention (exit 5).
+- **Quota error or `needs login` on a pool account** — see [Accounts](#accounts). A quota failure records a cooldown and is recovered inside the run when another account or an idle lender exists; otherwise the job ends with `quota_exhausted` and a `retry_at`. An authentication failure is never retried: run `agy-crew accounts login <name>` in your own terminal.
 - **`operation not permitted` on `~/.gemini/...` / `bind: operation not permitted` / sudden "authentication failed" while `agy` works in your terminal** — check whether a harness command sandbox is blocking access. AGY needs its OAuth credentials and a localhost port for its internal language server; allowing workspace writes alone may not provide that access. Where those restrictions apply, use the host's authorization mechanism to run the companion in a context that supports AGY. Use the same permission context to start and manage a job.
 - **False crash report on `wait`/`status` ("finished with status crashed and no stored result")** — the background job was started in one permission or sandbox context (e.g. unsandboxed) and collected from another (e.g. inside a command sandbox). The collector cannot see the worker PID across the sandbox boundary and misclassifies the running job as crashed. Run management commands (`wait`, `status`, `result`) in the same unsandboxed permission context as the job start; rerunning from the unsandboxed context resumes waiting or reporting normal status.
 - **Empty response, "status SUCCESS"** — a restricted run may report success even when its tool calls were denied. Check whether the profile came from a flag, repository policy or an earlier conversation. Use `setup` to configure allowed commands, or pass `--unrestricted` explicitly if authorized; dropping `--restricted` alone does not override an inherited profile. Some native tools remain unavailable in restricted headless runs even with allow-rules. An empty response from unrestricted mode or tool-free ask needs a separate diagnosis; retain the diagnostics and report it.
@@ -269,7 +402,7 @@ The native installer adds a package entry to the `plugin` array in the OpenCode 
 }
 ```
 
-The plugin appends its absolute bundled `opencode-skills/` directory to `skills.paths`, preserving existing paths and avoiding duplicate registrations. OpenCode discovers seven branded skills and exposes them as same-named slash commands: `/agy-crew-ask`, `/agy-crew-staffer`, `/agy-crew-researcher`, `/agy-crew-reviewer`, `/agy-crew-implementer`, `/agy-crew-jobs`, and `/agy-crew-lead`. No command wrappers are installed. Existing OpenCode skill permissions still apply.
+The plugin appends its absolute bundled `opencode-skills/` directory to `skills.paths`, preserving existing paths and avoiding duplicate registrations. OpenCode discovers eight branded skills and exposes them as same-named slash commands: `/agy-crew-ask`, `/agy-crew-staffer`, `/agy-crew-researcher`, `/agy-crew-reviewer`, `/agy-crew-implementer`, `/agy-crew-jobs`, `/agy-crew-accounts`, and `/agy-crew-lead`. No command wrappers are installed. Existing OpenCode skill permissions still apply.
 
 `npm run generate:opencode` generates these entrypoints from canonical `skills/`, copying all assets, rewriting invocation syntax and sibling paths, and appending the same host compatibility context as Pi. The companion and prompt templates remain shared. Install the whole package; copying only the plugin file would lose its relative resources.
 
@@ -334,11 +467,11 @@ To get upstream back later, run `agy-crew uninstall --all` first.
 
 ### Permission setup
 
-`setup` is unchanged in 0.8.0: it still edits the global `~/.gemini/antigravity-cli/settings.json`. The per-repository policy file is `.agy-crew/config.json`.
+`setup` still edits the global `~/.gemini/antigravity-cli/settings.json`; since 0.9.0, `setup --apply` also applies the same permission merge to every pool account's own `settings.json` (see [Settings and `setup --apply`](#settings-and-setup---apply)). The per-repository policy file is `.agy-crew/config.json`.
 
 ## Upgrading
 
-Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.8.0`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
+Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.9.0`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
 
 - **Terminal command (`agy-crew install`)** — for an npm install, run `npm install -g github:pStrikeZ/agy-crew` again, then `agy-crew install` to render a fresh bundle and re-link; restart the harness. For a checkout, `git pull` is live at once for the source, and `agy-crew install` refreshes the bundle. See [Install command](#install-command).
 - **Claude Code** — `claude plugin marketplace update agy-crew` refreshes the marketplace clone, then `claude plugin update agy-crew@agy-crew` re-copies it into the cache. `install` is **not** the upgrade command: on an already-installed plugin it answers "already installed" and does nothing, whatever the version. And `update` only moves if the version string changed — on an unchanged version it answers "already at the latest version" and leaves the old commit in place. Force the current commit in with `claude plugin uninstall agy-crew@agy-crew && claude plugin install agy-crew@agy-crew`. Restart Claude Code afterwards either way — skills are registered at session start.
@@ -354,6 +487,8 @@ You can check which commit is actually installed: the `gitCommitSha` in `~/.clau
 companion/agy-companion.mjs    command entrypoint, modes, job management and setup
 companion/identity.mjs         product identity constants (names, prefixes, state directories, AGY_CREW_HOME)
 companion/install.mjs          cross-harness installer behind `agy-crew install` / `uninstall`
+companion/accounts.mjs         `accounts` subcommands
+companion/pool/                account pool: state, selection, loans, quota, classifiers, isolated environment
 companion/stream-worker.mjs    streaming execution, process cleanup and deadlines
 companion/observation.mjs      event parsing, progress snapshots and output budgets
 companion/state-lock.mjs       state-write locking and stale-lock recovery
