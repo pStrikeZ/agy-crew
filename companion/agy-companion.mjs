@@ -26,6 +26,14 @@
  *   setup --restrict <modes|none>   optional: per-repo policy — make the listed
  *                                   modes default to the restricted profile in
  *                                   this repository (.agy-crew/config.json)
+ *   install [--hosts a,b | --all] [--dry-run] [--json] [--status]
+ *                                   install the skills into the user-level skill
+ *                                   directories of detected harnesses (claude,
+ *                                   codex, omp, opencode, dsh) from one shared
+ *                                   bundle; refuses to overwrite foreign content
+ *                                   or coexist with upstream agy-staff
+ *   uninstall [--hosts a,b | --all] [--json]
+ *                                   remove only the links install created
  *   _worker <job-id>                (internal) background job executor
  *
  * Uniform flags:
@@ -93,6 +101,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { PRODUCT, STATE_DIR_NAME } from './identity.mjs';
+import { cmdInstall, cmdUninstall } from './install.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
@@ -415,8 +424,8 @@ function pidAlive(pid) {
   }
 }
 
-const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file']);
-const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin']);
+const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts']);
+const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status']);
 
 // Flags dropped in 0.2. They get their own error instead of falling through to
 // "unknown flag", so a 0.1 caller learns what replaced them.
@@ -1867,10 +1876,10 @@ function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     die(
-      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup> [flags]\n' +
+      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup|install|uninstall> [flags]\n' +
         'flags: --restricted|--unrestricted --model <id> --effort <l|m|h> --timeout <dur> ' +
         '--prompt <text> --prompt-file <path> --stdin --conversation <id> --continue --json (review) ' +
-        '--apply --restrict <modes|none> (setup)\n' +
+        '--apply --restrict <modes|none> (setup) --hosts <a,b> --all --dry-run --status (install/uninstall)\n' +
         'task text for staffer/research/review/implement/ask/continue comes from exactly one of ' +
         '--prompt <text>, --prompt-file <path>, or --stdin.\n' +
         'staffer/research/review/implement run unrestricted by default (no setup needed); --restricted is the ' +
@@ -1898,6 +1907,10 @@ function main() {
       return cmdCancel(opts);
     case 'setup':
       return cmdSetup(opts);
+    case 'install':
+      return cmdInstall(opts);
+    case 'uninstall':
+      return cmdUninstall(opts);
     case '_worker':
       return workerMain(rest[0]);
     default:

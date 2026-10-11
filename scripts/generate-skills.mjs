@@ -28,6 +28,12 @@ const targets = {
     label: 'OpenCode', outputDir: 'opencode-skills', namePrefix: SKILL_PREFIX, invocationPrefix: '/',
     dropMetadata: ['allowed-tools', 'argument-hint', 'user-invocable'], appendCompatibility: true,
   },
+  // Virtual: rendered in memory by `agy-companion install`, never written to the repository.
+  user: {
+    label: 'User', outputDir: 'user-skills', namePrefix: SKILL_PREFIX, invocationPrefix: '/',
+    dropMetadata: ['allowed-tools', 'argument-hint', 'user-invocable'], appendCompatibility: true,
+    virtual: true,
+  },
 };
 
 const escapeRegex = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -84,6 +90,9 @@ export function skillFiles(root = ROOT, target) {
 }
 
 export function generateSkills({ root = ROOT, check = false, target } = {}) {
+  if (Object.hasOwn(targets, target) && targets[target].virtual) {
+    throw new Error(`Target ${target} is virtual; it is rendered by the install command`);
+  }
   const expected = skillFiles(root, target);
   const host = targets[target];
   const actual = filesUnder(path.join(root, host.outputDir));
@@ -110,14 +119,15 @@ export function generateSkills({ root = ROOT, check = false, target } = {}) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
-    const supported = ['all', ...Object.keys(targets)];
+    const concrete = Object.keys(targets).filter(name => !targets[name].virtual);
+    const supported = ['all', ...concrete];
     const selectors = args.filter(arg => arg.startsWith('--target='));
     if (selectors.length > 1 || args.some(arg => arg !== '--check' && !supported.some(target => arg === `--target=${target}`))) {
       throw new Error(`Usage: generate-skills.mjs [--check] [--target=${supported.join('|')}]`);
     }
     const selected = selectors[0]?.slice(9) || 'all';
     const check = args.includes('--check');
-    for (const target of selected === 'all' ? Object.keys(targets) : [selected]) {
+    for (const target of selected === 'all' ? concrete : [selected]) {
       const result = generateSkills({ check, target });
       console.log(`${targets[target].label} skills ${check ? 'verified' : 'generated'}: ${result.count} files (${result.changed.length} changed).`);
     }
