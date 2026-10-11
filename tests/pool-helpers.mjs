@@ -72,7 +72,7 @@ export function runAsync(sb, args, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [COMPANION, ...args], {
       cwd: sb.repo,
-      env: { ...process.env, HOME: sb.home, USERPROFILE: sb.home, AGY_BIN: FAKE_AGY, FAKE_AGY_ARGV_FILE: sb.argvFile, FAKE_AGY_SLEEP_MS: '50', ...extraEnv },
+      env: { ...process.env, HOME: sb.home, USERPROFILE: sb.home, AGY_CREW_HOME: globalHomeOf(sb), AGY_BIN: FAKE_AGY, FAKE_AGY_ARGV_FILE: sb.argvFile, FAKE_AGY_SLEEP_MS: '50', ...extraEnv },
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', (c) => { stdout += c; });

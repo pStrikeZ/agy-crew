@@ -156,7 +156,7 @@ test('actual npm archive contains resources and runs ask + detached job collecti
     assert.ok(match, `missing companion command in ${skill}`);
     const result = spawnSync(process.execPath, [path.resolve(skillDir, match[1]), ...args], {
       cwd: sb.repo, encoding: 'utf8', timeout: 60_000,
-      env: { ...process.env, AGY_BIN: FAKE_AGY, FAKE_AGY_RESPONSE: 'packaged OK', FAKE_AGY_SLEEP_MS: '150', ...extraEnv },
+      env: { ...process.env, HOME: sb.home, USERPROFILE: sb.home, AGY_BIN: FAKE_AGY, FAKE_AGY_RESPONSE: 'packaged OK', FAKE_AGY_SLEEP_MS: '150', ...extraEnv },
     });
     if (result.error) throw result.error;
     return result;

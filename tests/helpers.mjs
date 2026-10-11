@@ -13,6 +13,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// The companion keeps the account pool in a per-user global directory
+// (~/.agy-crew). A test that spawns it with an inherited environment would
+// otherwise read and write the developer's real pool, so point the whole test
+// process at a throwaway directory. Sandboxed runs below override it with the
+// sandbox's own home.
+process.env.AGY_CREW_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-crew-test-global-'));
 export const COMPANION = path.join(HERE, '..', 'companion', 'agy-companion.mjs');
 export const FAKE_AGY = path.join(HERE, 'fake-agy.mjs');
 
@@ -59,6 +66,7 @@ export function run(sb, args, extraEnv = {}, { input } = {}) {
       ...process.env,
       HOME: sb.home,
       USERPROFILE: sb.home, // os.homedir() reads this on Windows, HOME elsewhere
+      AGY_CREW_HOME: path.join(sb.home, '.agy-crew'),
       AGY_BIN: FAKE_AGY,
       FAKE_AGY_ARGV_FILE: sb.argvFile,
       // The fake agy answers in microseconds; a real one takes seconds. Keep a
