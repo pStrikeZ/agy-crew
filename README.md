@@ -36,13 +36,7 @@ The `-crew` suffix pairs with the author's `codex-staff`: `-staff` is single-acc
 
 ### Invoke a persona
 
-Type `/agy-crew-` in your harness and the five personas are listed. Through the Claude Code plugin route the form is `/agy-crew:staffer`. The screenshots below come from agy-staff and still show its upstream names (`/agy:`, `$agy`).
-
-![the command menu in Claude Code](assets/claude-code-screenshot.png)
-
-The same skills in Codex:
-
-![the skill picker in Codex](assets/codex-desktop-screenshot.png)
+Type `/agy-crew-` in your harness (Codex: `$agy-crew-`) and the five personas are listed. Through the Claude Code plugin route the form is `/agy-crew:staffer`.
 
 ### Install
 

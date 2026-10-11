@@ -170,13 +170,7 @@ install and verify the agy-crew plugin for the harness you are running in. Respo
 
 ## 使用
 
-在 harness 中输入 `/agy-crew-`，就能选择要使用的角色；通过 Claude Code 的插件方式安装时，写法是 `/agy-crew:staffer`。下面两张截图来自 agy-staff，仍然显示上游的名称（`/agy:`、`$agy`）：
-
-![Claude Code 中的命令菜单](assets/claude-code-screenshot.png)
-
-在 Codex 中可以找到对应的技能：
-
-![Codex 中的技能选择器](assets/codex-desktop-screenshot.png)
+在 harness 中输入 `/agy-crew-`（Codex 中为 `$agy-crew-`），就能选择要使用的角色；通过 Claude Code 的插件方式安装时，写法是 `/agy-crew:staffer`。
 
 下面的示例使用用户级写法 `/agy-crew-…`（Codex 中显示为 `$agy-crew-…`）。通过插件方式安装时，Claude Code 使用 `/agy-crew:…`，Codex 使用 `$agy-crew:…`；Pi 使用 `/skill:agy-crew-…`。
 
