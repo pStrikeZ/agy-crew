@@ -42,22 +42,22 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 接着安装 agy-crew。**agy-crew 与 agy-staff 不能安装在同一台机器上**（见[与 agy-staff 的关系](#与-agy-staff-的关系)），安装器发现 agy-staff 时会拒绝运行。
 
-先选一条路线。agy-crew 目前还没有发布到 npm 仓库，所以两条终端路线都直接从 GitHub 安装。
+先选一条路线。
 
 | 路线 | 需要 | 得到什么 | 适合 |
 |---|---|---|---|
-| A：npm（推荐） | Node.js 20+、npm、git | PATH 上的 `agy-crew` 命令 | 想要一条命令装好 |
+| A：npm（推荐） | Node.js 20+、npm | PATH 上的 `agy-crew` 命令 | 想要一条命令装好 |
 | A′：git clone + node | Node.js 20+、git（不需要 npm） | 只有技能；命令写作 `node <clone>/companion/agy-companion.mjs …` | 没有 npm 或不想用 npm |
 | B：插件管理器 | harness 自带的 CLI | harness 内的技能，没有终端命令 | 希望由 harness 管理插件 |
 
 ### 路线 A（推荐）：npm，一条命令
 
 ```bash
-npm install -g github:pStrikeZ/agy-crew
+npm install -g agy-crew
 agy-crew install
 ```
 
-开发时可以从检出目录安装：`git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`，再运行 `agy-crew install`。此时技能直接从检出目录运行，`git pull` 后立即生效；拉取之后请重新运行 `agy-crew install` 以刷新 bundle。
+想试用 `master` 上尚未发布的改动，可以改用 `npm install -g github:pStrikeZ/agy-crew`（需要 git）。开发时可以从检出目录安装：`git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`，再运行 `agy-crew install`。此时技能直接从检出目录运行，`git pull` 后立即生效；拉取之后请重新运行 `agy-crew install` 以刷新 bundle。
 
 ### 路线 A′：不用 npm，git clone + node
 
@@ -253,7 +253,7 @@ agent 动手写代码之前，会先列出你的 CLI 支持不了哪些原则，
 
 ```bash
 # 升级
-npm install -g github:pStrikeZ/agy-crew && agy-crew install   # 之后重启 harness
+npm install -g agy-crew@latest && agy-crew install   # 之后重启 harness
 # 卸载
 agy-crew uninstall --all && npm uninstall -g agy-crew
 ```
@@ -317,7 +317,7 @@ README 和参考手册都有中英文版本。修改使用方法或行为说明�
 2. 提交后打 tag 并推送：`git tag vX.Y.Z && git push origin master vX.Y.Z`。
 3. 工作流会检查 tag 与各处版本号一致、发布说明存在，运行 `check:skills` 和测试，然后发布到 npm（带 `-` 后缀的预发布版本进入 `next` 标签），再用发布说明创建 GitHub Release。已在 npm 上的版本会跳过发布，因此重跑是安全的；也可以用 `workflow_dispatch` 对已有 tag 重跑。
 
-fork 或新维护者的一次性准备：在仓库里启用 Actions；手动发布第一个版本（`npm publish`，npm 只允许给已存在的包配置受信任发布者）；然后在 npmjs.com 的包设置里添加 GitHub Actions 类型的受信任发布者，填写本仓库和工作流文件 `release.yml`，并在发布权限里选择要求双重验证、禁止使用 token。
+fork 或新维护者的一次性准备：在仓库里启用 Actions；手动发布第一个版本（`npm publish`，npm 只允许给已存在的包配置受信任发布者；npm 可能先把这次上传暂存起来，只显示一个 `0.0.0-stage` 占位版本，需要在 npmjs.com 上批准后才正式发布）；然后在 npmjs.com 的包设置里添加 GitHub Actions 类型的受信任发布者，填写本仓库和工作流文件 `release.yml`，并在发布权限里选择要求双重验证、禁止使用 token。
 
 ## 许可证
 

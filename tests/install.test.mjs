@@ -221,7 +221,7 @@ test('stale managed link is updated and the old bundle pruned', () => {
 
 test('package bin points at the shebanged companion', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  assert.equal(pkg.bin['agy-crew'], './companion/agy-companion.mjs');
+  assert.equal(pkg.bin['agy-crew'], 'companion/agy-companion.mjs');
   assert.ok(fs.readFileSync(path.join(ROOT, pkg.bin['agy-crew']), 'utf8').startsWith('#!/usr/bin/env node'));
 });
 

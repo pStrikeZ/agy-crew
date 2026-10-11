@@ -27,7 +27,7 @@ You normally know which product you are. If unsure, check:
 If `node` and `npm` are available, install the command and let it put the skills into the harness you are running in. It supports Claude Code (`claude`), Codex (`codex`), Oh My Pi (`omp`), OpenCode (`opencode`) and DeepSeek Harness (`dsh`); it does not cover Pi, which uses section 2c.
 
 ```bash
-npm install -g github:pStrikeZ/agy-crew
+npm install -g agy-crew
 agy-crew install --dry-run --hosts <this harness>   # optional: print the plan, write nothing
 agy-crew install --hosts <this harness>             # e.g. --hosts claude
 agy-crew install --status --json                    # verify per-host link state and bundle

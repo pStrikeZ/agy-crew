@@ -504,7 +504,7 @@ Windows 为尽力支持，由 CI 的 `Tests (Windows)` 任务覆盖，尚未在�
 `agy-crew install` 是通过终端安装技能的方式：先把技能渲染成一份共享的 bundle，再把它链接到检测到的每个 harness，而不是让每个 harness 各自维护一份插件缓存。前提：Node.js 20+，且 PATH 中有可用的 `agy`（用 `agy --version` 确认）。
 
 ```bash
-npm install -g github:pStrikeZ/agy-crew
+npm install -g agy-crew
 agy-crew install
 ```
 
@@ -566,7 +566,7 @@ Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew
 
 ### 终端命令（`agy-crew install`）
 
-用 npm 安装时，再次运行 `npm install -g github:pStrikeZ/agy-crew`，然后运行 `agy-crew install`，生成新的 bundle 并重新链接，再重启 harness。使用检出目录时，`git pull` 会立即更新源码，运行 `agy-crew install` 以刷新 bundle。详见[安装命令](#安装命令)。
+用 npm 安装时，运行 `npm install -g agy-crew@latest`，然后运行 `agy-crew install`，生成新的 bundle 并重新链接，再重启 harness。使用检出目录时，`git pull` 会立即更新源码，运行 `agy-crew install` 以刷新 bundle。详见[安装命令](#安装命令)。
 
 ### Claude Code
 

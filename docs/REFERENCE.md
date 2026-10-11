@@ -413,7 +413,7 @@ For local development, run `opencode plugin /absolute/path/to/checkout --global`
 `agy-crew install` is the terminal route to installing the skills. It renders them once into a shared bundle and links that bundle into every harness it finds, instead of each harness keeping its own plugin cache. Requirements: Node.js 20+ and a working `agy` on PATH (`agy --version`).
 
 ```bash
-npm install -g github:pStrikeZ/agy-crew
+npm install -g agy-crew
 agy-crew install
 ```
 
@@ -473,7 +473,7 @@ To get upstream back later, run `agy-crew uninstall --all` first.
 
 Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.9.0`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
 
-- **Terminal command (`agy-crew install`)** — for an npm install, run `npm install -g github:pStrikeZ/agy-crew` again, then `agy-crew install` to render a fresh bundle and re-link; restart the harness. For a checkout, `git pull` is live at once for the source, and `agy-crew install` refreshes the bundle. See [Install command](#install-command).
+- **Terminal command (`agy-crew install`)** — for an npm install, run `npm install -g agy-crew@latest`, then `agy-crew install` to render a fresh bundle and re-link; restart the harness. For a checkout, `git pull` is live at once for the source, and `agy-crew install` refreshes the bundle. See [Install command](#install-command).
 - **Claude Code** — `claude plugin marketplace update agy-crew` refreshes the marketplace clone, then `claude plugin update agy-crew@agy-crew` re-copies it into the cache. `install` is **not** the upgrade command: on an already-installed plugin it answers "already installed" and does nothing, whatever the version. And `update` only moves if the version string changed — on an unchanged version it answers "already at the latest version" and leaves the old commit in place. Force the current commit in with `claude plugin uninstall agy-crew@agy-crew && claude plugin install agy-crew@agy-crew`. Restart Claude Code afterwards either way — skills are registered at session start.
 - **Codex** — bump the version, run `codex plugin marketplace upgrade` (or remove and re-add the marketplace entry), then restart the app.
 - **OpenCode** — use a newer Git tag/commit in the native plugin installer with `--force`, then restart; see [OpenCode](#opencode).

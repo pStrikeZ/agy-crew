@@ -54,22 +54,22 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 Step 2 — install agy-crew. **agy-crew and agy-staff must not be installed on the same machine** (see [Relationship to agy-staff](#relationship-to-agy-staff)); the installer refuses to run beside it.
 
-Pick one route. agy-crew is not on the npm registry yet, so both terminal routes install straight from GitHub.
+Pick one route.
 
 | Route | Needs | You get | Pick it when |
 |---|---|---|---|
-| A: npm (recommended) | Node.js 20+, npm, git | the `agy-crew` command on PATH | you want the one-command install |
+| A: npm (recommended) | Node.js 20+, npm | the `agy-crew` command on PATH | you want the one-command install |
 | A′: git clone + node | Node.js 20+, git (no npm) | skills only; commands are `node <clone>/companion/agy-companion.mjs …` | npm is unavailable or unwanted |
 | B: plugin managers | the harness's own CLI | skills inside the harness; no terminal command | you prefer the harness to manage the plugin |
 
 #### Route A (recommended): npm, one command
 
 ```bash
-npm install -g github:pStrikeZ/agy-crew
+npm install -g agy-crew
 agy-crew install
 ```
 
-For development, from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
+To try unreleased changes from `master`, use `npm install -g github:pStrikeZ/agy-crew` instead (needs git). For development, from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
 
 #### Route A′: no npm, git clone + node
 
@@ -185,7 +185,7 @@ Route A (npm):
 
 ```bash
 # update
-npm install -g github:pStrikeZ/agy-crew && agy-crew install   # then restart the harness
+npm install -g agy-crew@latest && agy-crew install   # then restart the harness
 # uninstall
 agy-crew uninstall --all && npm uninstall -g agy-crew
 ```
@@ -319,7 +319,7 @@ Releases are published by [the Release workflow](.github/workflows/release.yml) 
 2. Commit, then tag and push: `git tag vX.Y.Z && git push origin master vX.Y.Z`.
 3. The workflow checks that the tag matches every version field and that the release notes exist, runs `check:skills` and the test suite, publishes to npm (a version with a `-` suffix goes to the `next` dist-tag), and creates the GitHub Release from the notes file. A version already on npm is skipped, so re-running is safe; `workflow_dispatch` re-runs an existing tag.
 
-One-time setup for a fork or a new maintainer: enable Actions on the repository, publish the first version manually (`npm publish`; npm only lets you configure a trusted publisher on a package that exists), then on npmjs.com open the package settings, add a trusted publisher of type GitHub Actions with this repository and the workflow file `release.yml`, and under publishing access choose to require two-factor authentication and disallow tokens.
+One-time setup for a fork or a new maintainer: enable Actions on the repository, publish the first version manually (`npm publish`; npm only lets you configure a trusted publisher on a package that exists; npm may stage that upload behind a `0.0.0-stage` placeholder until you approve it on npmjs.com), then on npmjs.com open the package settings, add a trusted publisher of type GitHub Actions with this repository and the workflow file `release.yml`, and under publishing access choose to require two-factor authentication and disallow tokens.
 
 ## License
 
