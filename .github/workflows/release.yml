@@ -1,0 +1,85 @@
+name: Release
+# Push a tag vX.Y.Z whose version matches package.json. The verify job runs the
+# same checks as CI; publish uses npm trusted publishing (GitHub OIDC), so no
+# NPM_TOKEN secret exists anywhere. A version already on npm is not published
+# again, which keeps a re-run (or the manually published first release) safe.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v0.9.1)
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Tag matches package.json and has release notes
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match package.json version $version"; exit 1
+          fi
+          for f in .claude-plugin/plugin.json .codex-plugin/plugin.json; do
+            v=$(node -p "require('./$f').version")
+            [ "$v" = "$version" ] || { echo "::error::$f has version $v, expected $version"; exit 1; }
+          done
+          [ -f "docs/releases/$TAG.md" ] || { echo "::error::missing docs/releases/$TAG.md"; exit 1; }
+      - run: npm run check:skills
+      - run: npm test
+
+  publish:
+    name: Publish to npm and GitHub
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # create the GitHub Release
+      id-token: write   # npm trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: npm new enough for trusted publishing
+        run: npm install -g npm@^11.5.1 && npm --version
+      - name: Publish
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm; skipping publish"
+            exit 0
+          fi
+          # A prerelease (1.2.0-rc.1) must not become `latest`.
+          case "$version" in *-*) dist_tag=next ;; *) dist_tag=latest ;; esac
+          npm publish --provenance --access public --tag "$dist_tag"
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"; exit 0
+          fi
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --verify-tag --title "agy-crew $TAG" --notes-file "docs/releases/$TAG.md" $prerelease

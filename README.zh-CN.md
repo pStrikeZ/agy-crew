@@ -309,6 +309,16 @@ agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面�
 
 README 和参考手册都有中英文版本。修改使用方法或行为说明时，请同步更新对应版本，让两种语言的读者得到一致的信息。
 
+### 发版
+
+版本由 [Release 工作流](.github/workflows/release.yml) 通过 npm 的 Trusted Publishing 发布：由 GitHub 的 OIDC 身份证明构建来源，任何地方都不保存 npm token，每个版本都带来源证明（provenance）。
+
+1. 修改 `package.json`、`.claude-plugin/plugin.json` 和 `.codex-plugin/plugin.json` 里的版本号，并新增 `docs/releases/vX.Y.Z.md`。
+2. 提交后打 tag 并推送：`git tag vX.Y.Z && git push origin master vX.Y.Z`。
+3. 工作流会检查 tag 与各处版本号一致、发布说明存在，运行 `check:skills` 和测试，然后发布到 npm（带 `-` 后缀的预发布版本进入 `next` 标签），再用发布说明创建 GitHub Release。已在 npm 上的版本会跳过发布，因此重跑是安全的；也可以用 `workflow_dispatch` 对已有 tag 重跑。
+
+fork 或新维护者的一次性准备：在仓库里启用 Actions；手动发布第一个版本（`npm publish`，npm 只允许给已存在的包配置受信任发布者）；然后在 npmjs.com 的包设置里添加 GitHub Actions 类型的受信任发布者，填写本仓库和工作流文件 `release.yml`，并在发布权限里选择要求双重验证、禁止使用 token。
+
 ## 许可证
 
 本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。原始版权归 Keli (pkuwkl)，fork 的改动由 pStrikeZ 完成。

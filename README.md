@@ -311,6 +311,16 @@ A few things worth knowing before you open a PR:
 
 Adding a mode or a flag changes the public surface, so please open an issue first and we can agree on the shape.
 
+### Releasing
+
+Releases are published by [the Release workflow](.github/workflows/release.yml) through npm trusted publishing: GitHub's OIDC identity proves the build, so no npm token is stored anywhere, and every version carries a provenance statement.
+
+1. Bump the version in `package.json`, `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`, and add `docs/releases/vX.Y.Z.md`.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin master vX.Y.Z`.
+3. The workflow checks that the tag matches every version field and that the release notes exist, runs `check:skills` and the test suite, publishes to npm (a version with a `-` suffix goes to the `next` dist-tag), and creates the GitHub Release from the notes file. A version already on npm is skipped, so re-running is safe; `workflow_dispatch` re-runs an existing tag.
+
+One-time setup for a fork or a new maintainer: enable Actions on the repository, publish the first version manually (`npm publish`; npm only lets you configure a trusted publisher on a package that exists), then on npmjs.com open the package settings, add a trusted publisher of type GitHub Actions with this repository and the workflow file `release.yml`, and under publishing access choose to require two-factor authentication and disallow tokens.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Original copyright Keli (pkuwkl); fork changes by pStrikeZ.
