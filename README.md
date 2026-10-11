@@ -12,7 +12,7 @@ Hire Google's Antigravity CLI (`agy`) as a staffer for **Claude Code**, **OpenAI
 
 ![design diagram](assets/design.png)
 
-**[Install](#install) · [Examples](#cujs) · [Account pool](#account-pool) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Upgrade](#upgrade) · [Relationship to agy-staff](#relationship-to-agy-staff)**
+**[Install](#install) · [Examples](#cujs) · [Account pool](#account-pool) · [Core design](#core-design) · [Build your own](#build-one-for-another-cli) · [Update and uninstall](#update-and-uninstall) · [Relationship to agy-staff](#relationship-to-agy-staff)**
 
 ## What & Why
 
@@ -54,14 +54,33 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 Step 2 — install agy-crew. **agy-crew and agy-staff must not be installed on the same machine** (see [Relationship to agy-staff](#relationship-to-agy-staff)); the installer refuses to run beside it.
 
-#### Route A (recommended): terminal command
+Pick one route. agy-crew is not on the npm registry yet, so both terminal routes install straight from GitHub.
+
+| Route | Needs | You get | Pick it when |
+|---|---|---|---|
+| A: npm (recommended) | Node.js 20+, npm, git | the `agy-crew` command on PATH | you want the one-command install |
+| A′: git clone + node | Node.js 20+, git (no npm) | skills only; commands are `node <clone>/companion/agy-companion.mjs …` | npm is unavailable or unwanted |
+| B: plugin managers | the harness's own CLI | skills inside the harness; no terminal command | you prefer the harness to manage the plugin |
+
+#### Route A (recommended): npm, one command
 
 ```bash
 npm install -g github:pStrikeZ/agy-crew
 agy-crew install
 ```
 
-Or from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
+For development, from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`, then `agy-crew install`. The skills then run straight from the checkout, so a `git pull` is live immediately; re-run `agy-crew install` after pulling so the bundle is refreshed.
+
+#### Route A′: no npm, git clone + node
+
+```bash
+git clone https://github.com/pStrikeZ/agy-crew
+node agy-crew/companion/agy-companion.mjs install
+```
+
+The skills work exactly the same: the bundle stores the absolute path of the companion inside the clone. There is no `agy-crew` command on PATH, so every command in this README that starts with `agy-crew` is written `node <clone>/companion/agy-companion.mjs <command>` instead, for example `node <clone>/companion/agy-companion.mjs accounts login work1`. Keep the clone where it is (moving or deleting it breaks the skills), and re-run the install command after each `git pull`. If you type these often, add a shell alias, for example `alias agy-crew='node ~/agy-crew/companion/agy-companion.mjs'`.
+
+#### What `install` does (Routes A and A′)
 
 `agy-crew install` auto-detects the harnesses present by their config directories. Flags: `--hosts claude,codex,omp,opencode,dsh` (explicit list), `--all`, `--dry-run` (print the plan, write nothing), `--status` (show per-host link state and bundles), `--json`. `agy-crew uninstall [--hosts …|--all]` removes only links it created.
 
@@ -75,9 +94,11 @@ Or from a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-cr
 
 The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths, and each harness gets a directory link (`agy-crew-<persona>`; a junction on Windows, no elevation needed) pointing into that bundle. Anything in a skills directory that the installer did not create is user content and is never overwritten; any conflict aborts the whole run before writing and prints the paths plus a remedy. Pi is not covered by `install`; use the Pi package route below.
 
-Restart the harness or open a new session afterwards. Smoke test: `/agy-crew-ask reply with OK` (Codex shows it as `$agy-crew-ask`). Ask is tool-free and needs no permission setup.
+Restart the harness or open a new session afterwards, then follow [First run](#first-run).
 
 #### Route B: harness plugin managers
+
+Plugin managers need no terminal command, but the account pool commands are awkward here: the companion lives inside the plugin cache, so you would have to call it by its cache path (use `/agy-crew-accounts` from the agent instead, or pick Route A or A′ if you want the pool).
 
 <details>
 <summary>Claude Code</summary>
@@ -127,6 +148,23 @@ OpenCode caches the complete package spec. Restarting does not refresh an unchan
 
 </details>
 
+#### First run
+
+Follow these top to bottom after installing.
+
+1. **Smoke test.** Restart the harness (or open a new session), then run `/agy-crew-ask reply with OK` (Codex: `$agy-crew-ask reply with OK`; plugin routes use the names in Route B). You should get a short answer back. Ask is tool-free and needs no permission setup. If it fails, run `agy --version` and start `agy` once interactively to log in.
+2. **Optional: account pool.** Without pool accounts everything runs on your own agy login, so skip this step if one account is enough. To add accounts, run in your own terminal (it opens a browser sign-in, so an agent cannot do it for you):
+
+   ```bash
+   agy-crew accounts login work1     # sign in with the browser; pick any name
+   agy-crew accounts login work2     # repeat for each further account (a different Google account each)
+   agy-crew accounts list            # each should show ready
+   agy-crew accounts quota --refresh # current quota per account
+   ```
+
+   On Route A′ replace `agy-crew` with `node <clone>/companion/agy-companion.mjs`. More in [Account pool](#account-pool).
+3. **Everyday use.** Invoke a persona: `/agy-crew-researcher`, `/agy-crew-reviewer`, `/agy-crew-implementer`, `/agy-crew-staffer` or `/agy-crew-lead` (Codex: `$agy-crew-…`). Background jobs are collected for you: your agent picks up the result through the jobs skill, so you do not run `wait` yourself. `/agy-crew-accounts` shows the pool (accounts, quota, cooldowns). See [CUJs](#cujs) for examples.
+
 > [!IMPORTANT]
 > **There is no mandatory setup step.** `staffer`, `researcher`, `reviewer` and `implementer` run **unrestricted** by default: agy can inspect the repo, run commands, and edit files. agy-crew keeps that practical with prompts that adapt to the current repo state. For example, when `implementer` starts in a dirty workspace, the companion tells agy which files already had changes and reminds it not to overwrite or deliver unrelated user work. If the task asks for a commit, push, or PR, agy can do that delivery; otherwise it leaves a working-tree diff for review. These prompt instructions do not provide permission isolation.
 > `setup` + `--restricted` is **optional hardening** for untrusted input — per run (`--restricted`) or as a per-repo default (`setup --restrict review,research`). `setup` dry-runs and asks before writing anything ("set up agy" triggers it); read the [permission notes](docs/REFERENCE.md#optional-hardening-setup) first — the allowlist is prefix-matched, applies machine-wide (it edits the global `~/.gemini/antigravity-cli/settings.json`), and a restricted run can return less than an unrestricted one. The per-repo policy file is `.agy-crew/config.json`.
@@ -141,9 +179,29 @@ work from a summary) and follow it to install and verify the agy-crew plugin for
 Respond in the user's language.
 ```
 
-#### Upgrade
+#### Update and uninstall
 
-Route A (terminal command): for an npm install run `npm install -g github:pStrikeZ/agy-crew` again, then `agy-crew install`; for a checkout run `git pull`, then `agy-crew install` to refresh the bundle. Restart the harness afterwards.
+Route A (npm):
+
+```bash
+# update
+npm install -g github:pStrikeZ/agy-crew && agy-crew install   # then restart the harness
+# uninstall
+agy-crew uninstall --all && npm uninstall -g agy-crew
+```
+
+For a `npm link` checkout, `git pull` then `agy-crew install` refreshes the bundle.
+
+Route A′ (git clone):
+
+```bash
+# update
+git -C <clone> pull && node <clone>/companion/agy-companion.mjs install   # then restart the harness
+# uninstall, then delete the clone
+node <clone>/companion/agy-companion.mjs uninstall --all
+```
+
+`~/.agy-crew` holds your pool accounts and old bundles; neither uninstall removes it. Delete it by hand only when you want the accounts gone.
 
 Route B: Claude Code and Codex install a *copy*, so a new version only reaches you when you pull it in yourself:
 
@@ -155,7 +213,7 @@ claude plugin marketplace update agy-crew && claude plugin update agy-crew@agy-c
 codex plugin marketplace upgrade && codex plugin add agy-crew@agy-crew  # then restart Codex
 ```
 
-Claude Code and Codex cache per version directory, so an upgrade lands only if the plugin version changed; restart the harness afterwards. If a fix does not show up, see [upgrading](docs/REFERENCE.md#upgrading) — it has the force-refresh command. Pi and OpenCode upgrades are described in their sections above.
+Claude Code and Codex cache per version directory, so an upgrade lands only if the plugin version changed; restart the harness afterwards. If a fix does not show up, see [upgrading](docs/REFERENCE.md#upgrading) — it has the force-refresh command. Pi and OpenCode upgrades are described in their sections above. To uninstall a Route B install, use the harness's own plugin manager (Claude Code: `claude plugin uninstall agy-crew@agy-crew`).
 
 ### CUJs
 

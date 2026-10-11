@@ -35,9 +35,22 @@ agy-crew install --status --json                    # verify per-host link state
 
 For a local checkout the user gave you, run `npm link` inside it instead of `npm install -g`; the skills then run from the checkout, and `agy-crew install` must be re-run after a `git pull`. The installer renders the skills once into `~/.agy-crew/bundles/<version>-<digest>/` and links `agy-crew-<persona>` directories into the harness skills directory. It never overwrites anything it did not create; on any conflict it aborts before writing and prints the paths and a remedy, which you should relay verbatim and not work around. If route A succeeds, skip to section 3.
 
+### Route A′ (fallback): no npm, git clone + node
+
+If `node` is available but `npm` is not (or the user does not want a global npm package), and `git` is available, clone the repo and run the companion directly. Pick a stable location (for example `~/agy-crew`); the bundle stores the absolute path of the companion inside the clone, so the clone must not move or be deleted afterwards.
+
+```bash
+git clone https://github.com/pStrikeZ/agy-crew <clone>
+node <clone>/companion/agy-companion.mjs install --dry-run --hosts <this harness>   # optional
+node <clone>/companion/agy-companion.mjs install --hosts <this harness>
+node <clone>/companion/agy-companion.mjs install --status --json
+```
+
+The skills behave exactly as in route A, but there is **no `agy-crew` command on PATH**: wherever this guide says `agy-crew <command>`, run `node <clone>/companion/agy-companion.mjs <command>` instead (a shell alias is optional and the user's call). To update, `git -C <clone> pull`, then re-run the install command. To uninstall, run `node <clone>/companion/agy-companion.mjs uninstall --all`, then delete the clone; `~/.agy-crew` (pool accounts) is removed only manually and only if the user asks. If route A′ succeeds, skip to section 3.
+
 ### Route B: the harness plugin manager
 
-Use this when route A is not possible (no npm, Pi, or the user prefers the plugin manager). Follow exactly one of the four sections below.
+Use this when route A and A′ are not possible (no node-based install, Pi, or the user prefers the plugin manager). Note the trade-off for the user: there is no terminal command, and the account pool commands are awkward because the companion lives in the plugin cache. Follow exactly one of the four sections below.
 
 ## 2a. Claude Code — plugin route (B) install / upgrade
 
@@ -120,13 +133,13 @@ Changing the ref creates a fresh cache key; `--force` replaces the configured pl
 
 Run the zero-setup ask mode — it needs no allowlist and answers in ~3 seconds:
 
-- Installed with route A (any harness): `/agy-crew-ask reply with OK` (Codex shows it as `$agy-crew-ask`) — after the restart
+- Installed with route A or A′ (any harness): `/agy-crew-ask reply with OK` (Codex shows it as `$agy-crew-ask`) — after the restart
 - Claude Code plugin route: `/agy-crew:ask "reply with OK"` — **after the restart**, otherwise you are testing the old copy or nothing at all
 - Codex: `$agy-crew:ask reply with OK`
 - Pi: `/skill:agy-crew-ask reply with OK` — after restart or `/reload`
 - OpenCode: `/agy-crew-ask reply with OK` — after restart
 
-If you cannot restart the session, call the companion of the freshly installed copy directly from the shell. After route A the `agy-crew` command is the companion: `agy-crew ask --prompt "reply with OK"`. It is the same code path the skill takes, so a pass here means the install is sound:
+If you cannot restart the session, call the companion of the freshly installed copy directly from the shell. After route A the `agy-crew` command is the companion: `agy-crew ask --prompt "reply with OK"`; after route A′ run `node <clone>/companion/agy-companion.mjs ask --prompt "reply with OK"`. It is the same code path the skill takes, so a pass here means the install is sound:
 
 For Claude Code, resolve its installed copy with:
 
@@ -175,7 +188,7 @@ Never run `accounts login` yourself. It opens a browser sign-in and waits for th
 agy-crew accounts login work1     # choose any name: lowercase letters, digits, . _ -
 ```
 
-Without the command on PATH, use `node <plugin-root>/companion/agy-companion.mjs accounts login work1`. Repeat with another name for each account (each must be a different Google account). If the user already has agy homes from agy-cli-manager, `agy-crew accounts import <name> --home <dir>` copies the token without a browser; ask before importing. Afterwards you can verify without side effects:
+Without the command on PATH (route A′ or B), use `node <clone-or-plugin-root>/companion/agy-companion.mjs accounts login work1`. Repeat with another name for each account (each must be a different Google account). If the user already has agy homes from agy-cli-manager, `agy-crew accounts import <name> --home <dir>` copies the token without a browser; ask before importing. Afterwards you can verify without side effects:
 
 ```bash
 agy-crew accounts list            # each account should show "ready"
@@ -193,7 +206,7 @@ Per-repo state lives in `<repo>/.agy-crew/`; the companion git-ignores it automa
 
 ## 7. Report back
 
-Tell the user, in **their** language: whether install succeeded (name the version and whether it came from the GitHub slug or a local checkout, and whether you used route A or route B), the smoke-test result, whether a restart is still needed before the skills load, and whether the optional setup rules were applied, declined, or never offered (the default unrestricted profile does not need it), and whether any pool accounts were added (and that the user, not you, ran the login).
+Tell the user, in **their** language: whether install succeeded (name the version and whether it came from the GitHub slug or a local checkout, and whether you used route A, A′ or B; for A′ also the clone path, which must stay put), the smoke-test result, whether a restart is still needed before the skills load, and whether the optional setup rules were applied, declined, or never offered (the default unrestricted profile does not need it), and whether any pool accounts were added (and that the user, not you, ran the login).
 
 Default: prepare the prompt, dispatch, wait for the final result, then validate as needed. On wait exit 2, wait again for the same job without extra progress checks. While running, do not proactively observe, read logs or inspect intermediate artifacts, including for routine updates. Observe only when the user explicitly asks for progress; diagnose after a failure or a result requiring intervention. Host collection of a pending wait command is necessary result collection, not active observation. Prefer background completion delivery or the longest practical blocking wait the host supports; avoid short empty polls and sleep/observe loops. The worker's hard limit and explicit recovery protocol remain separate from wait soft expiry.
 

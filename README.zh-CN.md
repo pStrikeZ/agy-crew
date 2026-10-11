@@ -12,7 +12,7 @@
 
 ![设计图](assets/design.png)
 
-**[安装](#安装) · [使用示例](#使用) · [账号池](#账号池) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级](#升级) · [与 agy-staff 的关系](#与-agy-staff-的关系)**
+**[安装](#安装) · [使用示例](#使用) · [账号池](#账号池) · [核心设计](#核心设计) · [为其他 CLI 做一个](#为其他-cli-做一个) · [升级与卸载](#升级与卸载) · [与 agy-staff 的关系](#与-agy-staff-的关系)**
 
 ## 它适合做什么
 
@@ -42,14 +42,33 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 接着安装 agy-crew。**agy-crew 与 agy-staff 不能安装在同一台机器上**（见[与 agy-staff 的关系](#与-agy-staff-的关系)），安装器发现 agy-staff 时会拒绝运行。
 
-### 路线 A（推荐）：终端命令
+先选一条路线。agy-crew 目前还没有发布到 npm 仓库，所以两条终端路线都直接从 GitHub 安装。
+
+| 路线 | 需要 | 得到什么 | 适合 |
+|---|---|---|---|
+| A：npm（推荐） | Node.js 20+、npm、git | PATH 上的 `agy-crew` 命令 | 想要一条命令装好 |
+| A′：git clone + node | Node.js 20+、git（不需要 npm） | 只有技能；命令写作 `node <clone>/companion/agy-companion.mjs …` | 没有 npm 或不想用 npm |
+| B：插件管理器 | harness 自带的 CLI | harness 内的技能，没有终端命令 | 希望由 harness 管理插件 |
+
+### 路线 A（推荐）：npm，一条命令
 
 ```bash
 npm install -g github:pStrikeZ/agy-crew
 agy-crew install
 ```
 
-也可以从检出目录安装：`git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`，再运行 `agy-crew install`。此时技能直接从检出目录运行，`git pull` 后立即生效；拉取之后请重新运行 `agy-crew install` 以刷新 bundle。
+开发时可以从检出目录安装：`git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew && npm link`，再运行 `agy-crew install`。此时技能直接从检出目录运行，`git pull` 后立即生效；拉取之后请重新运行 `agy-crew install` 以刷新 bundle。
+
+### 路线 A′：不用 npm，git clone + node
+
+```bash
+git clone https://github.com/pStrikeZ/agy-crew
+node agy-crew/companion/agy-companion.mjs install
+```
+
+技能的行为完全一样：bundle 中记录的是 clone 内 companion 的绝对路径。PATH 上没有 `agy-crew` 命令，因此本文中所有以 `agy-crew` 开头的命令，都要改写成 `node <clone>/companion/agy-companion.mjs <命令>`，例如 `node <clone>/companion/agy-companion.mjs accounts login work1`。clone 必须留在原处（移动或删除会让技能失效），每次 `git pull` 之后都要重新运行安装命令。嫌麻烦的话可以设一个 shell 别名，例如 `alias agy-crew='node ~/agy-crew/companion/agy-companion.mjs'`。
+
+### `install` 做了什么（路线 A 和 A′）
 
 `agy-crew install` 会根据配置目录自动检测已有的 harness。参数：`--hosts claude,codex,omp,opencode,dsh`（显式列表）、`--all`、`--dry-run`（只打印计划，不写入）、`--status`（显示各 host 的链接状态和 bundle）、`--json`。`agy-crew uninstall [--hosts …|--all]` 只移除安装器自己创建的链接。
 
@@ -63,9 +82,11 @@ agy-crew install
 
 技能只渲染一次，写入 `~/.agy-crew/bundles/<version>-<digest>/`，其中 companion 路径为绝对路径；每个 harness 得到指向该 bundle 的目录链接（`agy-crew-<persona>`，Windows 上是 junction，不需要提权）。技能目录中任何不是安装器创建的内容都视为用户内容，绝不覆盖；出现任何冲突时，整次运行会在写入之前中止，并打印相关路径和处理办法。`install` 不覆盖 Pi，请使用下面的 Pi 软件包方式。
 
-安装后重启 harness 或开启新会话，再做一次验证：`/agy-crew-ask reply with OK`（Codex 中显示为 `$agy-crew-ask`）。`ask` 不调用工具，也不需要额外的权限配置。
+安装后重启 harness 或开启新会话，然后按[首次使用](#首次使用)继续。
 
 ### 路线 B：harness 的插件管理器
+
+插件管理器不需要终端命令，但账号池命令在这条路线下比较别扭：companion 位于插件缓存目录里，只能用缓存路径去调用（可以改在 agent 里用 `/agy-crew-accounts`，想用账号池也可以直接选路线 A 或 A′）。
 
 <details>
 <summary>Claude Code</summary>
@@ -114,6 +135,23 @@ opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git' --global
 OpenCode 按完整包规格缓存；仅重启不会刷新相同的 Git 规格。升级时选择新的 Git 标签或提交，运行 `opencode plugin 'agy-crew@git+https://github.com/pStrikeZ/agy-crew.git#<tag-or-commit>' --global --force`，然后重启。配置与本地开发方式见[参考手册](docs/REFERENCE.zh-CN.md#opencode)。此适配器不覆盖 OpenCode V2。
 
 </details>
+
+### 首次使用
+
+装好之后，按下面的顺序走一遍即可。
+
+1. **冒烟测试。** 重启 harness（或开启新会话），运行 `/agy-crew-ask reply with OK`（Codex 中是 `$agy-crew-ask reply with OK`；插件路线请用路线 B 中的写法）。应该会返回一句简短的回答。`ask` 不调用工具，也不需要额外的权限配置。如果失败，先运行 `agy --version`，并手动启动一次 `agy` 完成登录。
+2. **可选：账号池。** 不添加账号时，一切都跑在你自己的 agy 登录上；一个账号够用就可以跳过这一步。要添加账号，请在你自己的终端里运行（会打开浏览器登录，agent 无法代劳）：
+
+   ```bash
+   agy-crew accounts login work1     # 在浏览器里登录；名字随意
+   agy-crew accounts login work2     # 每多一个账号重复一次（每次用不同的 Google 账号）
+   agy-crew accounts list            # 每个账号都应显示 ready
+   agy-crew accounts quota --refresh # 查看各账号当前配额
+   ```
+
+   路线 A′ 请把 `agy-crew` 换成 `node <clone>/companion/agy-companion.mjs`。详见[账号池](#账号池)。
+3. **日常使用。** 直接调用角色：`/agy-crew-researcher`、`/agy-crew-reviewer`、`/agy-crew-implementer`、`/agy-crew-staffer`、`/agy-crew-lead`（Codex 中是 `$agy-crew-…`）。后台任务的结果由 agent 通过 jobs 技能替你收取，不需要自己运行 `wait`。`/agy-crew-accounts` 用来查看账号池（账号、配额、冷却状态）。示例见[使用](#使用)。
 
 > [!IMPORTANT]
 > `staffer`、`researcher`、`reviewer` 和 `implementer` 默认使用 `unrestricted` 权限配置，可以读取仓库、运行命令和修改文件。插件会通过提示词说明任务边界和已有改动的归属；任务明确要求提交、推送或创建 PR 时，agy 才应执行相应操作，否则留下工作区改动供你审查。这些提示约定不能替代权限隔离。
@@ -209,9 +247,29 @@ Ask me before any call that spends model quota. Respond in the user's language.
 
 agent 动手写代码之前，会先列出你的 CLI 支持不了哪些原则，让你提前知道工具会在哪些地方降级。
 
-## 升级
+## 升级与卸载
 
-路线 A（终端命令）：用 npm 安装时，再次运行 `npm install -g github:pStrikeZ/agy-crew`，然后运行 `agy-crew install`；使用检出目录时，运行 `git pull`，再运行 `agy-crew install` 刷新 bundle。之后重启 harness。
+路线 A（npm）：
+
+```bash
+# 升级
+npm install -g github:pStrikeZ/agy-crew && agy-crew install   # 之后重启 harness
+# 卸载
+agy-crew uninstall --all && npm uninstall -g agy-crew
+```
+
+如果是 `npm link` 的检出目录，运行 `git pull`，再运行 `agy-crew install` 刷新 bundle。
+
+路线 A′（git clone）：
+
+```bash
+# 升级
+git -C <clone> pull && node <clone>/companion/agy-companion.mjs install   # 之后重启 harness
+# 卸载，然后删除 clone 目录
+node <clone>/companion/agy-companion.mjs uninstall --all
+```
+
+`~/.agy-crew` 里保存着账号池的账号和 bundle，两种卸载都不会删除它；只有想彻底清掉账号时才手动删除。
 
 路线 B：Claude Code 和 Codex 使用的是安装时复制到缓存中的插件。仓库发布新版本后，需要主动更新，并重启应用才能加载新的技能。
 
@@ -227,7 +285,7 @@ Codex 的更新命令是：
 codex plugin marketplace upgrade && codex plugin add agy-crew@agy-crew
 ```
 
-这两个环境都按版本号管理插件缓存。如果更新后仍然看到旧行为，请先确认是否已重启应用，再参考[升级说明](docs/REFERENCE.zh-CN.md#升级)检查版本和实际安装的提交。Pi 和 OpenCode 的更新方式见上方安装说明。
+这两个环境都按版本号管理插件缓存。如果更新后仍然看到旧行为，请先确认是否已重启应用，再参考[升级说明](docs/REFERENCE.zh-CN.md#升级)检查版本和实际安装的提交。Pi 和 OpenCode 的更新方式见上方安装说明。卸载路线 B 的安装，请使用 harness 自带的插件管理器（Claude Code：`claude plugin uninstall agy-crew@agy-crew`）。
 
 ## 与 agy-staff 的关系
 
