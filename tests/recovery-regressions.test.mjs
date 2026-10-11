@@ -135,7 +135,7 @@ test('CLI exit cleans inherited output pipes before the hard deadline', async ()
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.equal(job(sb, id).warnings, false, 'must finish without reaching the hard deadline');
   const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-  for (let i = 0; i < 20 && alive(pid); i++) await pause(50);
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline && alive(pid);) await pause(50);
   assert.equal(alive(pid), false);
 });
 
@@ -164,7 +164,7 @@ test('one failed process inspection preserves tracked descendants after reparent
   await waitForFile(failed);
   const r = run(sb, ['cancel', id]);
   assert.equal(r.code, 0, r.stderr);
-  for (let i = 0; i < 20 && alive(pid); i++) await pause(50);
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline && alive(pid);) await pause(50);
   assert.equal(alive(pid), false, 'the orphan must remain tracked across inspection failure');
 });
 

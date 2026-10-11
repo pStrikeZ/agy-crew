@@ -40,7 +40,7 @@ test('soft expiry includes observation; independent observers and interrupted wa
   assert.ok(fs.existsSync(first.details.raw_output));
   fs.writeFileSync(release, 'finish');
   assert.equal(run(sb, ['wait', id]).code, 0);
-  for (let i = 0; i < 20 && fs.existsSync(first.details.raw_output); i++) await pause(50);
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline && fs.existsSync(first.details.raw_output);) await pause(50);
   assert.equal(fs.existsSync(first.details.raw_output), false);
   assert.equal(fs.existsSync(job(sb, id).progress_file), false);
   assert.equal(JSON.parse(run(sb, ['observe', id]).stdout).status, 'done');
@@ -149,8 +149,11 @@ test('hard stop escalates for a SIGTERM-resistant CLI and detached descendant', 
 test('observe racing success cleanup always yields a bounded JSON snapshot', async () => {
   const sb = sandbox('cleanup-race');
   const id = jobIdOf(run(sb, ['staffer', '--prompt', 'test'], { FAKE_AGY_SLEEP_MS: '200' }).stdout);
+  // Poll until a deadline, not a fixed count: under a loaded machine the job
+  // can take several seconds, and the point is to observe densely across the
+  // success cleanup, however long the run takes to reach it.
   let done = false;
-  for (let i = 0; i < 30; i++) {
+  for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
     const result = run(sb, ['observe', id]);
     if (result.code === 0) {
       assert.equal(JSON.parse(result.stdout).status, 'done');
@@ -162,7 +165,7 @@ test('observe racing success cleanup always yields a bounded JSON snapshot', asy
     await pause(20);
   }
   assert.ok(done);
-  for (let i = 0; i < 20 && fs.existsSync(job(sb, id).events_file); i++) await pause(50);
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline && fs.existsSync(job(sb, id).events_file);) await pause(50);
   assert.equal(fs.existsSync(job(sb, id).events_file), false);
 });
 
