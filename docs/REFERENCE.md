@@ -207,7 +207,7 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 |---|---|
 | `accounts list [--json]` | Name, email, state (`ready`, `busy n`, `cooling <family> until <time>`, `needs login`, `disabled`), last use and cached quota summary, plus a line for live: `live (your own agy login; never pooled)` |
 | `accounts login <name>` | Interactive sign-in for a new account, or a re-login of an existing one. See [Login](#login) |
-| `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory. Same email and duplicate checks as login. Refuses the live home |
+| `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). Same email and duplicate checks as login. Refuses the live home |
 | `accounts quota [<name>...] [--refresh] [--json]` | Print cached quota snapshots and cooldowns. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
 | `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
 | `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
