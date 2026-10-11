@@ -2,7 +2,7 @@
  * Black-box harness for the companion CLI.
  *
  * Every test gets its own sandbox: a throwaway git repo under os.tmpdir() plus
- * a throwaway HOME, so `.agy-staff/` state and any `~/.gemini` writes can never
+ * a throwaway HOME, so `.agy-crew/` state and any `~/.gemini` writes can never
  * land in the real repo or the real home directory. `agy` is replaced with
  * tests/fake-agy.mjs via AGY_BIN — no test ever reaches the network.
  */
@@ -27,7 +27,7 @@ export function sandbox(label = 'case', { git = true } = {}) {
   // .native also expands Windows 8.3 short names (RUNNER~1), which git and
   // realpath'd companion output report in long form.
   const root = fs.realpathSync.native(
-    fs.mkdtempSync(path.join(os.tmpdir(), `agy-staff-test-${label}-`))
+    fs.mkdtempSync(path.join(os.tmpdir(), `agy-crew-test-${label}-`))
   );
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
@@ -38,11 +38,11 @@ export function sandbox(label = 'case', { git = true } = {}) {
     const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr}`);
 
-    // Calling-agent hygiene (spec ".agy-staff/ hygiene"): the companion never
+    // Calling-agent hygiene (spec ".agy-crew/ hygiene"): the companion never
     // git-ignores its own state, so the caller must. Without this the implement
-    // clean-tree precondition would trip over `?? .agy-staff/` on the 2nd call,
+    // clean-tree precondition would trip over `?? .agy-crew/` on the 2nd call,
     // and the review/research delta report would blame agy for it.
-    fs.appendFileSync(path.join(repo, '.git', 'info', 'exclude'), '\n.agy-staff/\n');
+    fs.appendFileSync(path.join(repo, '.git', 'info', 'exclude'), '\n.agy-crew/\n');
   }
 
   return { root, repo, home, git, argvFile: path.join(root, 'agy-argv.jsonl') };
@@ -92,17 +92,17 @@ export function promptOf(argv) {
 
 /**
  * The worker's log file for a job. Both stdout and stderr of the detached
- * worker land here, so this is where a background run's `[agy-staff]`
+ * worker land here, so this is where a background run's `[agy-crew]`
  * telemetry lives (it is deliberately absent from the result file).
  */
 export function jobLog(sb, jobId) {
-  const logFile = path.join(sb.repo, '.agy-staff', 'jobs', `${jobId}.log`);
+  const logFile = path.join(sb.repo, '.agy-crew', 'jobs', `${jobId}.log`);
   return fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
 }
 
 /** The stored result file of a job, exactly as wait/result print it. */
 export function jobResultFile(sb, jobId) {
-  const f = path.join(sb.repo, '.agy-staff', 'jobs', `${jobId}.result.md`);
+  const f = path.join(sb.repo, '.agy-crew', 'jobs', `${jobId}.result.md`);
   return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
 }
 
@@ -128,7 +128,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Windows workers pay for PowerShell process-table queries at startup and on
 // cleanup; a cold runner can spend most of the 10 s POSIX budget on those.
 async function waitForWorker(sb, jobId, { tries = process.platform === 'win32' ? 600 : 200, delayMs = 50 } = {}) {
-  const resultFile = path.join(sb.repo, '.agy-staff', 'jobs', `${jobId}.result.md`);
+  const resultFile = path.join(sb.repo, '.agy-crew', 'jobs', `${jobId}.result.md`);
   for (let i = 0; i < tries; i++) {
     if (fs.existsSync(resultFile)) {
       await sleep(200);

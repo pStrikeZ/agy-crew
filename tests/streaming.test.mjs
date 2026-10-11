@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { sandbox, run, jobIdOf, waitForCalls, agyCalls, COMPANION, FAKE_AGY } from './helpers.mjs';
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const state = (sb) => JSON.parse(fs.readFileSync(path.join(sb.repo, '.agy-staff/state.json'), 'utf8'));
+const state = (sb) => JSON.parse(fs.readFileSync(path.join(sb.repo, '.agy-crew/state.json'), 'utf8'));
 const job = (sb, id) => state(sb).jobs.find((j) => j.id === id);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const events = [{ event: 'step_update', step_update: { conversation_id: 'conv-1', step_index: 2, step_type: 'tool', state: 'DONE', tool_name: 'shell', tool_info: { parameters: { command: 'hello' }, output: 'world' } } }, { event: 'step_update', step_update: { conversation_id: 'conv-1', step_index: 3, step_type: 'agent_response', state: 'ACTIVE', text_delta: 'Working…' } }];
@@ -118,7 +118,7 @@ test('parallel dispatch and completion never lose registry entries or cross stre
 
 test('crash reports distinguish missing logs and restart links a fresh job', () => {
   const sb = sandbox('crash-packet');
-  const dir = path.join(sb.repo, '.agy-staff'); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(sb.repo, '.agy-crew'); fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ jobs: [{ id: 'legacy', mode: 'research', status: 'running', pid: 99999999, started_at: new Date().toISOString(), log_file: path.join(dir, 'missing.log'), result_file: path.join(dir, 'missing.result') }] }));
   const report = run(sb, ['observe', 'legacy']);
   assert.equal(report.code, 3);

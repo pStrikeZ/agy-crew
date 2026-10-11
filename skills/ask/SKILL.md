@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Ask Google's Antigravity CLI (agy staffer, fast Gemini) a cheap one-shot question - the fast zero-tool mode and the post-install smoke test. Use when the user says /agy:ask, "ask agy", "quick second opinion from agy", or right after installing to verify the plugin works.
+description: Ask Google's Antigravity CLI (agy staffer, fast Gemini) a cheap one-shot question - the fast zero-tool mode and the post-install smoke test. Use when the user says /agy-crew:ask, "ask agy", "quick second opinion from agy", or right after installing to verify the plugin works.
 argument-hint: '[--continue] [--model <id>|--effort low|medium|high] [--timeout <dur>] "question"'
 allowed-tools: Bash(node:*)
 ---
@@ -35,6 +35,6 @@ ask is always restricted (it is tool-free, so there is nothing to unrestrict); `
 
 ## Rules
 
-- Pass the user's question through verbatim and return the answer verbatim. The `[agy-staff]` telemetry line arrives on stderr and is metadata for you, the calling agent — do not show it to the user; mention the follow-up ability in natural language when relevant, and give model/duration/token numbers only if asked.
+- Pass the user's question through verbatim and return the answer verbatim. The `[agy-crew]` telemetry line arrives on stderr and is metadata for you, the calling agent — do not show it to the user; mention the follow-up ability in natural language when relevant, and give model/duration/token numbers only if asked.
 - If the answer says "not sure", relay it as-is; do not silently substitute your own answer.
 - Exit 5 means a resumable response timeout: explain it and ask whether the user wants to continue with the suggested timeout or stop. Continue only after explicit user confirmation, using the recorded conversation and configuration. For other companion errors, quote the error and add a concise diagnosis. Full failure protocol: `../jobs/SKILL.md`.

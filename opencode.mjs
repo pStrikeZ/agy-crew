@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const bundledSkills = fileURLToPath(new URL('./opencode-skills', import.meta.url));
 
-export const AgyStaffPlugin = async () => ({
+export const AgyCrewPlugin = async () => ({
   config: async config => {
     config.skills ??= {};
     config.skills.paths ??= [];

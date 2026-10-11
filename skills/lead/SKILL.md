@@ -1,6 +1,6 @@
 ---
 name: lead
-description: Orchestrate an ongoing task with AGY while the current agent owns key decisions, review, and delivery. Use when the user invokes /agy:lead or asks you to coordinate a task using AGY.
+description: Orchestrate an ongoing task with AGY while the current agent owns key decisions, review, and delivery. Use when the user invokes /agy-crew:lead or asks you to coordinate a task using AGY.
 argument-hint: '[task]'
 ---
 

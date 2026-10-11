@@ -60,11 +60,11 @@ describe('wait', () => {
     const r = run(sb, ['wait', id]);
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /fake answer/);
-    assert.doesNotMatch(r.stdout, /\[agy-staff\]/);
+    assert.doesNotMatch(r.stdout, /\[agy-crew\]/);
     assert.doesNotMatch(r.stdout, /follow up with --continue/);
 
     const log = jobLog(sb, id);
-    assert.match(log, /\[agy-staff\] mode=research profile=unrestricted model=\S+ /);
+    assert.match(log, /\[agy-crew\] mode=research profile=unrestricted model=\S+ /);
     assert.match(log, /^conversation: conv-1 \(follow up with --continue\)$/m);
   });
 

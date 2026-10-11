@@ -9,7 +9,7 @@
  * are never blocked and report any working-tree delta with the result instead.
  *
  * Output split: stdout (and the stored result file) carry agy's response plus
- * any guard warning; the `[agy-staff]` telemetry line goes to stderr, which for
+ * any guard warning; the `[agy-crew]` telemetry line goes to stderr, which for
  * a background job means the worker's `jobs/<id>.log`.
  */
 import { test, describe } from 'node:test';
@@ -47,12 +47,12 @@ describe('execution style is fixed per mode', () => {
 
     // stdout is the deliverable only — no plumbing for the user to read
     assert.match(r.stdout, /fake answer/);
-    assert.doesNotMatch(r.stdout, /\[agy-staff\]/);
+    assert.doesNotMatch(r.stdout, /\[agy-crew\]/);
     assert.doesNotMatch(r.stdout, /conversation: conv-1/);
     assert.doesNotMatch(r.stdout, /^---$/m);
 
     // stderr carries the telemetry, both lines, for the calling agent
-    assert.match(r.stderr, /\[agy-staff\] mode=ask profile=restricted model=\S+ /);
+    assert.match(r.stderr, /\[agy-crew\] mode=ask profile=restricted model=\S+ /);
     assert.match(r.stderr, /duration=\S+ turns=\S+ tokens\(/);
     assert.match(r.stderr, /^conversation: conv-1 \(follow up with --continue\)$/m);
   });
@@ -75,8 +75,8 @@ describe('execution style is fixed per mode', () => {
       assert.match(r.stdout, /one background wait per job/);
       // the dispatch itself must not have blocked on agy — no telemetry on
       // either stream, the run has not happened yet
-      assert.doesNotMatch(r.stdout, /\[agy-staff\] mode=/);
-      assert.doesNotMatch(r.stderr, /\[agy-staff\] mode=/);
+      assert.doesNotMatch(r.stdout, /\[agy-crew\] mode=/);
+      assert.doesNotMatch(r.stderr, /\[agy-crew\] mode=/);
     });
   }
 });
@@ -136,7 +136,7 @@ describe('permission profile wiring reaches the agy argv', () => {
     const sb = sandbox('prof-ask-un');
     const r = run(sb, ['ask', '--unrestricted', '--prompt', 'what is 2 plus 2?']);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /^agy-staff: ask is tool-free; --unrestricted ignored$/m);
+    assert.match(r.stderr, /^agy-crew: ask is tool-free; --unrestricted ignored$/m);
     assert.match(r.stderr, /profile=restricted/);
     assert.doesNotMatch(r.stdout, /profile=/);
     const [argv] = agyCalls(sb);
@@ -281,8 +281,8 @@ describe('tiered git guards: implement', () => {
 
     const res = run(sb, ['result', id]);
     assert.match(res.stdout, /fake answer/);
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=implement profile=unrestricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=implement profile=unrestricted/);
     // no git → no tree report of either kind
     assert.doesNotMatch(res.stdout, /\[unrestricted\] Working tree clean after implement/);
     assert.doesNotMatch(res.stdout, /\[unrestricted\] agy modified the working tree/);
@@ -301,9 +301,9 @@ describe('tiered git guards: implement', () => {
     assert.match(res.stdout, /\[unrestricted\] Working tree clean after implement/);
     assert.doesNotMatch(res.stdout, /\[loose\]/);
     // … the telemetry does not, it is in the worker log instead
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.doesNotMatch(jobResultFile(sb, id), /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=implement profile=unrestricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.doesNotMatch(jobResultFile(sb, id), /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=implement profile=unrestricted/);
     assert.match(jobLog(sb, id), /^conversation: conv-1 \(follow up with --continue\)$/m);
   });
 
@@ -374,8 +374,8 @@ describe('tiered git guards: review / research are never blocked', () => {
     assert.equal(await waitForJob(sb, id), 'done');
     const res = run(sb, ['result', id]);
     assert.match(res.stdout, /fake answer/);
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=review profile=unrestricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=review profile=unrestricted/);
     assert.doesNotMatch(res.stdout, /agy modified the working tree/);
   });
 });
@@ -417,8 +417,8 @@ describe('working-tree delta report (review / research)', () => {
 
     const res = run(sb, ['result', id]);
     assert.match(res.stdout, /fake answer/);
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=review profile=unrestricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=review profile=unrestricted/);
     assert.doesNotMatch(res.stdout, /agy modified the working tree/);
     assert.doesNotMatch(res.stdout, /Working tree unchanged/);
   });
@@ -468,8 +468,8 @@ describe('working-tree delta report (review / research)', () => {
 
     const res = run(sb, ['result', id]);
     assert.match(res.stdout, /fake answer/);
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=review profile=restricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=review profile=restricted/);
     assert.doesNotMatch(res.stdout, /agy modified the working tree/);
   });
 });

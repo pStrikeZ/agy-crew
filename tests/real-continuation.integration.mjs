@@ -49,7 +49,7 @@ function launchAsync(cwd, args) {
   });
 }
 function jobs(cwd) {
-  try { return JSON.parse(fs.readFileSync(path.join(cwd, '.agy-staff/state.json'), 'utf8')).jobs || []; }
+  try { return JSON.parse(fs.readFileSync(path.join(cwd, '.agy-crew/state.json'), 'utf8')).jobs || []; }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 function job(cwd, id) {
@@ -69,7 +69,7 @@ function events(cwd) {
 function capture(cwd) {
   for (const j of jobs(cwd)) {
     if (j.events_file && fs.existsSync(j.events_file)) {
-      try { fs.copyFileSync(j.events_file, path.join(cwd, '.agy-staff', `${j.id}.captured-events.jsonl`)); }
+      try { fs.copyFileSync(j.events_file, path.join(cwd, '.agy-crew', `${j.id}.captured-events.jsonl`)); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
@@ -95,8 +95,8 @@ async function collect(cwd, id, record) {
   await until(cwd, () => terminal(job(cwd, id)), 130000, `No terminal report for ${id}`);
   const result = run(cwd, ['wait', id, '--timeout', '1s']);
   const j = job(cwd, id);
-  fs.writeFileSync(path.join(cwd, '.agy-staff', `${id}.delivery.txt`), result.stdout);
-  fs.writeFileSync(path.join(cwd, '.agy-staff', `${id}.delivery.stderr.txt`), result.stderr);
+  fs.writeFileSync(path.join(cwd, '.agy-crew', `${id}.delivery.txt`), result.stdout);
+  fs.writeFileSync(path.join(cwd, '.agy-crew', `${id}.delivery.stderr.txt`), result.stderr);
   const log = fs.existsSync(j.log_file) ? fs.readFileSync(j.log_file, 'utf8') : '';
   record.results.push({ id, status: j.status, reason: j.reason, conversation_id: j.conversation_id,
     wait_exit: result.code, finished_at: j.finished_at, response: result.stdout.slice(0, 3000),
@@ -140,7 +140,7 @@ async function toolStarted(cwd, id, label) {
   assert.ok(events(cwd).some(e => e.label === label && e.phase === 'entered'), `AGY did not execute ${label}`);
   assert.ok(!terminal(job(cwd, id)), 'Invocation ended before the rejection check');
 }
-const jobFiles = cwd => fs.readdirSync(path.join(cwd, '.agy-staff/jobs')).sort();
+const jobFiles = cwd => fs.readdirSync(path.join(cwd, '.agy-crew/jobs')).sort();
 console.log(`Evidence: ${root}`); save();
 for (const kind of selected ? [selected] : cases) {
   const cwd = createCase(kind);
@@ -154,7 +154,7 @@ for (const kind of selected ? [selected] : cases) {
     const conversation = first.conversation_id; assert.ok(conversation);
     record.conversation_id = conversation;
     if (kind === 'simultaneous') {
-      lock = path.join(cwd, '.agy-staff/state.json.lock');
+      lock = path.join(cwd, '.agy-crew/state.json.lock');
       await until(cwd, () => !fs.existsSync(lock) && jobs(cwd).find(j => j.id === seed).status === 'done', 5000, 'Seed registry not settled');
       lockOwner = `owner-${process.pid}-${randomUUID()}`;
       fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, lockOwner), '');

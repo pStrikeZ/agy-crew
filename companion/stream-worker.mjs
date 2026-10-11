@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { PRODUCT } from './identity.mjs';
 import { createParser, createProjection, excerpt, boundSnapshot } from './observation.mjs';
 import { replaceFile } from './state-lock.mjs';
 
@@ -112,7 +113,7 @@ export function processTable() {
   if (process.platform === 'win32') {
     const table = windowsProcessTable();
     if (!table) {
-      if (!inspectionUnavailable) process.stderr.write('agy-staff warning: process-tree inspection unavailable; run unsandboxed to verify descendant cleanup.\n');
+      if (!inspectionUnavailable) process.stderr.write(PRODUCT + ' warning: process-tree inspection unavailable; run unsandboxed to verify descendant cleanup.\n');
       inspectionUnavailable = true;
       return null;
     }
@@ -125,7 +126,7 @@ export function processTable() {
     env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
   });
   if (ps.error || ps.status !== 0) {
-    if (!inspectionUnavailable) process.stderr.write('agy-staff warning: process-tree inspection unavailable; run unsandboxed to verify descendant cleanup.\n');
+    if (!inspectionUnavailable) process.stderr.write(PRODUCT + ' warning: process-tree inspection unavailable; run unsandboxed to verify descendant cleanup.\n');
     inspectionUnavailable = true;
     return null;
   }
@@ -337,7 +338,7 @@ export async function runStreaming({ binary, args, job, budget, signal, update, 
       const warning = 'Worker hard execution limit reached after a response was received; delivering the response with a cleanup warning.';
       projection.warn(warning);
       stderr = `${stderr}\n${warning}`.trim();
-      process.stderr.write(`agy-staff warning: ${warning}\n`);
+      process.stderr.write(`${PRODUCT} warning: ${warning}\n`);
     } else if (reason) throw Object.assign(new Error(reason === 'hard_timeout' ? 'Worker hard execution limit reached.' : 'Execution canceled.'), { reason });
     if (spawnError) throw Object.assign(new Error(`failed to launch agy (${binary}): ${spawnError.message}`), { reason: 'launch_error' });
     if (!payload) {

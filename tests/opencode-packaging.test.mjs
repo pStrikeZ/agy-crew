@@ -12,19 +12,19 @@ const names = ['ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', '
 
 test('OpenCode output preserves canonical policy, rewrites invocations, and resolves every resource', () => {
   assert.deepEqual(generateSkills({ target: 'opencode', check: true }).changed, []);
-  assert.deepEqual(fs.readdirSync(path.join(ROOT, 'opencode-skills')).sort(), names.map(name => `agy-${name}`));
+  assert.deepEqual(fs.readdirSync(path.join(ROOT, 'opencode-skills')).sort(), names.map(name => `agy-crew-${name}`));
   for (const name of names) {
-    const skillDir = path.join(ROOT, 'opencode-skills', `agy-${name}`);
+    const skillDir = path.join(ROOT, 'opencode-skills', `agy-crew-${name}`);
     const canonical = fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
     const generated = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
-    assert.match(generated, new RegExp(`^name: agy-${name}$`, 'm'));
+    assert.match(generated, new RegExp(`^name: agy-crew-${name}$`, 'm'));
     assert.doesNotMatch(generated, /^(?:allowed-tools|argument-hint|user-invocable):/m);
-    assert.doesNotMatch(generated, /\/agy:|\$agy:|\/skill:agy-/);
+    assert.doesNotMatch(generated, /\/agy-crew:|\$agy-crew:|\/skill:agy-crew-/);
     let body = canonical.replace(/^---\n[\s\S]*?\n---\n/, '');
     for (const peer of names) {
-      body = body.replaceAll(`/agy:${peer}`, `/agy-${peer}`).replaceAll(`$agy:${peer}`, `/agy-${peer}`)
-        .replaceAll(`../${peer}/`, `../agy-${peer}/`)
-        .replaceAll(`<plugin-root>/skills/${peer}/`, `<plugin-root>/opencode-skills/agy-${peer}/`);
+      body = body.replaceAll(`/agy-crew:${peer}`, `/agy-crew-${peer}`).replaceAll(`$agy-crew:${peer}`, `/agy-crew-${peer}`)
+        .replaceAll(`../${peer}/`, `../agy-crew-${peer}/`)
+        .replaceAll(`<plugin-root>/skills/${peer}/`, `<plugin-root>/opencode-skills/agy-crew-${peer}/`);
     }
     assert.equal(generated.replace(/^---\n[\s\S]*?\n---\n\n<!-- Generated[^\n]+-->\n/, ''), body + '\n' + COMPATIBILITY_CONTEXT);
     for (const match of generated.matchAll(/`((?:\.\.\/|references\/)[^`]*\.md)`/g)) {
@@ -43,8 +43,8 @@ test('OpenCode generation copies assets, detects drift and never overwrites in c
   const options = { root: sb.root, target: 'opencode' };
   generateSkills(options);
   assert.deepEqual(generateSkills(options).changed, []);
-  assert.deepEqual(fs.readFileSync(path.join(sb.root, 'opencode-skills/agy-ask/asset.bin')), asset);
-  const output = path.join(sb.root, 'opencode-skills/agy-ask/SKILL.md');
+  assert.deepEqual(fs.readFileSync(path.join(sb.root, 'opencode-skills/agy-crew-ask/asset.bin')), asset);
+  const output = path.join(sb.root, 'opencode-skills/agy-crew-ask/SKILL.md');
   fs.appendFileSync(output, '\nhand edit\n');
   assert.throws(() => generateSkills({ ...options, check: true }), /Stale OpenCode skills/);
   assert.match(fs.readFileSync(output, 'utf8'), /hand edit/);
@@ -66,7 +66,7 @@ test('packed OpenCode plugin registers only bundled branded skills idempotently 
   for (const hook of ['prepack', 'prepare', 'preinstall', 'install', 'postinstall', 'build']) {
     assert.equal(manifest.scripts[hook], undefined, `${hook} breaks native Git installation`);
   }
-  const output = path.join(dir, 'opencode-skills/agy-ask/SKILL.md');
+  const output = path.join(dir, 'opencode-skills/agy-crew-ask/SKILL.md');
   const original = fs.readFileSync(output);
   fs.appendFileSync(output, '\nstale generated content\n');
   const stalePack = spawnSync('npm', ['run', 'pack:checked'], {
@@ -79,8 +79,8 @@ test('packed OpenCode plugin registers only bundled branded skills idempotently 
   fs.writeFileSync(output, original);
 
   const plugin = await import(pathToFileURL(path.join(dir, manifest.main)));
-  assert.deepEqual(Object.keys(plugin), ['AgyStaffPlugin']);
-  const hooks = await plugin.AgyStaffPlugin({});
+  assert.deepEqual(Object.keys(plugin), ['AgyCrewPlugin']);
+  const hooks = await plugin.AgyCrewPlugin({});
   const config = { skills: { paths: ['/existing/skills'], urls: ['https://example.invalid/skills'] }, permission: { skill: { '*': 'ask' } } };
   await hooks.config(config);
   await hooks.config(config);
@@ -89,7 +89,7 @@ test('packed OpenCode plugin registers only bundled branded skills idempotently 
   await hooks.config(empty);
   assert.deepEqual(empty, { skills: { paths: [path.join(dir, 'opencode-skills')] } });
   const invoke = (skill, args, sleep = '150') => {
-    const skillDir = path.join(empty.skills.paths[0], `agy-${skill}`);
+    const skillDir = path.join(empty.skills.paths[0], `agy-crew-${skill}`);
     const command = /node "<skill-dir>\/([^"\n]+)"/.exec(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'));
     assert.ok(command, `companion command missing from ${skill}`);
     const result = spawnSync(process.execPath, [path.resolve(skillDir, command[1]), ...args], {

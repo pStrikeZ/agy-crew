@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { sandbox, run, jobIdOf, agyCalls, waitForCalls, COMPANION, FAKE_AGY } from './helpers.mjs';
 
-const stateFile = sb => path.join(sb.repo, '.agy-staff/state.json');
+const stateFile = sb => path.join(sb.repo, '.agy-crew/state.json');
 const state = sb => JSON.parse(fs.readFileSync(stateFile(sb), 'utf8'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate) {
@@ -47,11 +47,11 @@ test('all follow-up entrypoints reject an active successor while other conversat
     ['continue', '--conversation', conversation], ['continue'], ['research', '--continue'],
     ...['staffer', 'research', 'review', 'implement', 'ask'].map(mode => [mode, '--conversation', conversation]),
   ];
-  const filesBefore = fs.readdirSync(path.join(sb.repo, '.agy-staff/jobs')).sort();
+  const filesBefore = fs.readdirSync(path.join(sb.repo, '.agy-crew/jobs')).sort();
   for (const request of requests) refused(run(sb, [...request, '--prompt', 'must not run']), active);
   assert.equal(agyCalls(sb).length, 2);
   assert.equal(state(sb).jobs.length, 2);
-  assert.deepEqual(fs.readdirSync(path.join(sb.repo, '.agy-staff/jobs')).sort(), filesBefore);
+  assert.deepEqual(fs.readdirSync(path.join(sb.repo, '.agy-crew/jobs')).sort(), filesBefore);
   assert.equal(state(sb).jobs.find(j => j.id === active).cancel_requested_at, undefined);
   const unrelated = jobIdOf(run(sb, ['staffer', '--prompt', 'independent'], { FAKE_AGY_CONVERSATION_ID: 'independent' }).stdout);
   assert.equal(run(sb, ['wait', unrelated]).code, 0);
@@ -65,7 +65,7 @@ test('all follow-up entrypoints reject an active successor while other conversat
 test('simultaneous follow-ups recheck occupancy inside registration and leave no rejected spec', async t => {
   const sb = sandbox('continue-registration-race');
   const release = path.join(sb.root, 'release');
-  const dir = path.join(sb.repo, '.agy-staff');
+  const dir = path.join(sb.repo, '.agy-crew');
   const lock = path.join(dir, 'state.json.lock');
   const owner = `owner-${process.pid}-${randomUUID()}`;
   let pending = [];

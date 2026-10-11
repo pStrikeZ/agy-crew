@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sandbox, run, agyCalls, jobIdOf, promptOf } from './helpers.mjs';
 
-const state = sb => JSON.parse(fs.readFileSync(path.join(sb.repo, '.agy-staff/state.json'), 'utf8'));
+const state = sb => JSON.parse(fs.readFileSync(path.join(sb.repo, '.agy-crew/state.json'), 'utf8'));
 const timeoutEnv = {
   FAKE_AGY_STATUS: 'ERROR', FAKE_AGY_ERROR: 'timeout waiting for response',
   FAKE_AGY_RESPONSE: '', FAKE_AGY_EXIT: '1', FAKE_AGY_CONVERSATION_ID: 'timed-out',

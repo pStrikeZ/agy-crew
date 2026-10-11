@@ -17,7 +17,7 @@ function run(cwd, args) {
   if (r.error) throw r.error;
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
-const getJob = (cwd, id) => JSON.parse(fs.readFileSync(path.join(cwd, '.agy-staff/state.json'), 'utf8')).jobs.find((j) => j.id === id);
+const getJob = (cwd, id) => JSON.parse(fs.readFileSync(path.join(cwd, '.agy-crew/state.json'), 'utf8')).jobs.find((j) => j.id === id);
 const isAlive = (pid) => {
   const r = spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' });
   return !!r.stdout.trim() && !r.stdout.trim().startsWith('Z');
@@ -94,7 +94,7 @@ try {
   for (const kind of ['normal', 'structured', 'cancel', 'hard_timeout']) {
     const cwd = path.join(root, kind);
     try {
-      for (const job of JSON.parse(fs.readFileSync(path.join(cwd, '.agy-staff/state.json'), 'utf8')).jobs) if (job.status === 'running') run(cwd, ['cancel', job.id]);
+      for (const job of JSON.parse(fs.readFileSync(path.join(cwd, '.agy-crew/state.json'), 'utf8')).jobs) if (job.status === 'running') run(cwd, ['cancel', job.id]);
     } catch {}
   }
 }

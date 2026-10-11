@@ -1,6 +1,6 @@
 ---
 name: researcher
-description: Delegate a deep research or survey task to Google's Antigravity CLI (agy staffer, fast Gemini). Use when the user says /agy:researcher, "ask agy to research", "have the agy staffer survey X", or wants a second, independent deep-dive on a topic or codebase without spending the host model's quota.
+description: Delegate a deep research or survey task to Google's Antigravity CLI (agy staffer, fast Gemini). Use when the user says /agy-crew:researcher, "ask agy to research", "have the agy staffer survey X", or wants a second, independent deep-dive on a topic or codebase without spending the host model's quota.
 argument-hint: '[--continue] [--model <id>|--effort low|medium|high] [--restricted|--unrestricted] [--prompt-file <path>|--stdin] "what to research"'
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(gh:*)
 ---
@@ -37,7 +37,7 @@ The command returns a job id. Read `../jobs/SKILL.md` for result collection and 
 ## Rules
 
 - Do not do the research yourself and do not re-verify agy's findings.
-- Return the companion stdout verbatim. The `[agy-staff]` telemetry line goes to stderr (and into `jobs/<id>.log` for background runs) — it is metadata for you, the calling agent, not something to show the user.
+- Return the companion stdout verbatim. The `[agy-crew]` telemetry line goes to stderr (and into `jobs/<id>.log` for background runs) — it is metadata for you, the calling agent, not something to show the user.
 - Pass the user's explicit authorizations through to the task string verbatim. The prompt template default-denies costly or irreversible side effects (commits/pushes, deleting files outside the workspace, side-effectful network calls, commands that burn paid API quota); that default opens only when the request itself asks for the operation — so keep "run the e2e tests" or "call the staging API" in the prompt instead of trimming it.
 - If a `--restricted` run reports an empty response due to denied permissions, relay the companion's guidance: run the setup flow once (see `../jobs/references/setup.md`), or drop `--restricted`.
 - For errors and recovery, follow `../jobs/SKILL.md`.

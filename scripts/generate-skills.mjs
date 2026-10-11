@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SKILL_PREFIX, PLUGIN_INVOCATIONS } from '../companion/identity.mjs';
 
 export const ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const COMPATIBILITY_CONTEXT = fs.readFileSync(new URL('../templates/harness-compatibility.md', import.meta.url), 'utf8');
@@ -20,14 +21,17 @@ function filesUnder(dir) {
 
 const targets = {
   pi: {
-    label: 'Pi', outputDir: 'pi-skills', namePrefix: 'agy-', invocationPrefix: '/skill:',
+    label: 'Pi', outputDir: 'pi-skills', namePrefix: SKILL_PREFIX, invocationPrefix: '/skill:',
     dropMetadata: ['allowed-tools', 'argument-hint', 'user-invocable'], appendCompatibility: true,
   },
   opencode: {
-    label: 'OpenCode', outputDir: 'opencode-skills', namePrefix: 'agy-', invocationPrefix: '/',
+    label: 'OpenCode', outputDir: 'opencode-skills', namePrefix: SKILL_PREFIX, invocationPrefix: '/',
     dropMetadata: ['allowed-tools', 'argument-hint', 'user-invocable'], appendCompatibility: true,
   },
 };
+
+const escapeRegex = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const INVOCATION = PLUGIN_INVOCATIONS.map(escapeRegex).join('|');
 
 export function skillFiles(root = ROOT, target) {
   if (!Object.hasOwn(targets, target)) throw new Error(`Unknown skill target: ${target}`);
@@ -48,7 +52,7 @@ export function skillFiles(root = ROOT, target) {
         // Change only skill invocation syntax and skill-directory paths, never
         // companion subcommands such as `review`, `research`, or `wait`.
         for (const peer of names) {
-          content = content.replace(new RegExp(`(?:/agy:|\\$agy:)${peer}(?![a-z0-9-])`, 'g'), `${invocationPrefix}${namePrefix}${peer}`)
+          content = content.replace(new RegExp(`(?:${INVOCATION})${peer}(?![a-z0-9-])`, 'g'), `${invocationPrefix}${namePrefix}${peer}`)
             .replaceAll(`../${peer}/`, `../${namePrefix}${peer}/`)
             .replaceAll(`<plugin-root>/skills/${peer}/`, `<plugin-root>/${outputDir}/${namePrefix}${peer}/`);
         }

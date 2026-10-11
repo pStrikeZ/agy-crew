@@ -1,18 +1,22 @@
 {
-  "name": "agy-staff",
-  "version": "0.7.4",
-  "description": "Delegate work to Google's Antigravity CLI (agy) with fast Gemini access.",
+  "name": "agy-crew",
+  "version": "0.8.0",
+  "description": "Delegate work to Google's Antigravity CLI (agy) across a pool of accounts. A fork of agy-staff.",
+  "bin": {
+    "agy-crew": "./companion/agy-companion.mjs"
+  },
   "keywords": [
     "pi-package",
-    "opencode-plugin"
+    "opencode-plugin",
+    "agy-crew"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keli-wen/agy-staff.git"
+    "url": "git+https://github.com/pStrikeZ/agy-crew.git"
   },
-  "homepage": "https://github.com/keli-wen/agy-staff",
-  "bugs": "https://github.com/keli-wen/agy-staff/issues",
+  "homepage": "https://github.com/pStrikeZ/agy-crew",
+  "bugs": "https://github.com/pStrikeZ/agy-crew/issues",
   "files": [
     "skills/",
     "pi-skills/",

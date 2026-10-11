@@ -1,26 +1,27 @@
 {
-  "name": "agy",
-  "version": "0.7.4",
-  "description": "Delegate work to Google's Antigravity CLI (agy) with fast Gemini access - five personas: staffer (general), researcher, reviewer (code and plans), implementer, ask.",
+  "name": "agy-crew",
+  "version": "0.8.0",
+  "description": "Delegate work to Google's Antigravity CLI (agy) across a pool of accounts - five personas: staffer (general), researcher, reviewer (code and plans), implementer, ask. A fork of agy-staff.",
   "author": {
-    "name": "Keli Wen",
-    "url": "https://github.com/keli-wen"
+    "name": "pStrikeZ",
+    "url": "https://github.com/pStrikeZ"
   },
-  "homepage": "https://github.com/keli-wen/agy-staff",
+  "homepage": "https://github.com/pStrikeZ/agy-crew",
   "license": "MIT",
   "keywords": [
     "antigravity",
     "gemini",
     "delegation",
     "review",
-    "research"
+    "research",
+    "agy-crew"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "AGY Staff",
-    "shortDescription": "Delegate tasks to Google Antigravity CLI (agy)",
-    "longDescription": "Delegate work to Google's Antigravity CLI (agy) with fast Gemini access - five personas: staffer (general), researcher, reviewer (code and plans), implementer, ask.",
-    "developerName": "Keli Wen",
+    "displayName": "AGY Crew",
+    "shortDescription": "Delegate tasks to Google Antigravity CLI (agy) across an account pool",
+    "longDescription": "Delegate work to Google's Antigravity CLI (agy) across a pool of accounts - five personas: staffer (general), researcher, reviewer (code and plans), implementer, ask. A fork of agy-staff.",
+    "developerName": "pStrikeZ",
     "category": "Engineering",
     "capabilities": [
       "Instructions"

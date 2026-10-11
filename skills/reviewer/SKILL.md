@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Get a second-opinion review from Google's Antigravity CLI (agy staffer, fast Gemini) - of code (a diff, PR, working tree) or of a decision, plan, or design. Use when the user says /agy:reviewer, "have agy review this", "second opinion on my diff/PR/plan", or after finishing work and wanting an independent verifier that does not share the host model's blind spots.
+description: Get a second-opinion review from Google's Antigravity CLI (agy staffer, fast Gemini) - of code (a diff, PR, working tree) or of a decision, plan, or design. Use when the user says /agy-crew:reviewer, "have agy review this", "second opinion on my diff/PR/plan", or after finishing work and wanting an independent verifier that does not share the host model's blind spots.
 argument-hint: '[--restricted|--unrestricted] [--json] [--model <id>|--effort low|medium|high] [--prompt-file <path>|--stdin] "what to review"'
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(gh:*)
 ---

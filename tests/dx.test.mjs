@@ -2,7 +2,7 @@
  * DX surface: the staffer mode's minimal prompt, the three explicit task-text
  * sources (--prompt / --prompt-file / --stdin) and the opacity guarantee that
  * comes with them, the value-flag guards, and first-run auto-ignore of
- * .agy-staff/.
+ * .agy-crew/.
  *
  * The opacity contract (issue #3): argv is parsed once, exactly as the shell
  * delivered it. Once a task value is read, no byte of it is ever inspected for
@@ -184,7 +184,7 @@ describe('task text is opaque: flag-like content is never parsed (issue #3)', ()
     const r = run(sb, ['continue', '--prompt', 'now check --check again']);
     assert.notEqual(r.code, 0);
     // the point: it fails on "no conversation yet", not on flag parsing
-    assert.match(r.stderr, /no previous agy-staff conversation recorded/);
+    assert.match(r.stderr, /no previous agy-crew conversation recorded/);
     assert.doesNotMatch(r.stderr, /unknown flag/);
     assert.doesNotMatch(r.stderr, /needs a value/);
   });
@@ -226,7 +226,7 @@ describe('task text comes only from the three sources', () => {
     const sb = sandbox('no-sentinel');
     const r = run(sb, ['ask', '--', 'a question']);
     assert.notEqual(r.code, 0);
-    assert.match(r.stderr, /^agy-staff error: unknown flag --$/m);
+    assert.match(r.stderr, /^agy-crew error: unknown flag --$/m);
     assert.equal(agyCalls(sb).length, 0, 'agy must not be invoked');
   });
 });
@@ -285,7 +285,7 @@ describe('management commands are unaffected by the task-source change', () => {
     const r = run(sb, ['setup', '--restrict', 'review']);
     assert.equal(r.code, 0, r.stderr);
     const cfg = JSON.parse(
-      fs.readFileSync(path.join(sb.repo, '.agy-staff', 'config.json'), 'utf8')
+      fs.readFileSync(path.join(sb.repo, '.agy-crew', 'config.json'), 'utf8')
     );
     assert.equal(cfg.profiles.review, 'restricted');
   });
@@ -299,8 +299,8 @@ describe('management commands are unaffected by the task-source change', () => {
   });
 });
 
-describe('.agy-staff/ hygiene is automatic', () => {
-  test('first run appends .agy-staff/ to .git/info/exclude', () => {
+describe('.agy-crew/ hygiene is automatic', () => {
+  test('first run appends .agy-crew/ to .git/info/exclude', () => {
     const sb = sandbox('auto-exclude');
     // undo the sandbox's own hygiene to simulate a fresh caller
     const exclude = path.join(sb.repo, '.git', 'info', 'exclude');
@@ -308,12 +308,12 @@ describe('.agy-staff/ hygiene is automatic', () => {
 
     const r = run(sb, ['ask', '--prompt', 'a question']);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(fs.readFileSync(exclude, 'utf8'), /^\.agy-staff\/$/m);
-    const check = spawnSync('git', ['check-ignore', '-q', '.agy-staff'], { cwd: sb.repo });
-    assert.equal(check.status, 0, '.agy-staff must be git-ignored after the first run');
+    assert.match(fs.readFileSync(exclude, 'utf8'), /^\.agy-crew\/$/m);
+    const check = spawnSync('git', ['check-ignore', '-q', '.agy-crew'], { cwd: sb.repo });
+    assert.equal(check.status, 0, '.agy-crew must be git-ignored after the first run');
   });
 
-  test('an already-ignored .agy-staff/ is not appended again', () => {
+  test('an already-ignored .agy-crew/ is not appended again', () => {
     const sb = sandbox('auto-exclude-idempotent');
     const exclude = path.join(sb.repo, '.git', 'info', 'exclude');
     const before = fs.readFileSync(exclude, 'utf8');

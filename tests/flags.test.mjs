@@ -61,7 +61,7 @@ describe('deprecated aliases', () => {
     const sb = sandbox('alias-strict');
     const r = run(sb, ['implement', '--strict', '--prompt', 'do a thing']);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /^agy-staff: --strict is deprecated; use --restricted$/m);
+    assert.match(r.stderr, /^agy-crew: --strict is deprecated; use --restricted$/m);
     // implement defaults to unrestricted, so the alias is what flips it
     assert.match(r.stdout, /profile: restricted/);
   });
@@ -70,7 +70,7 @@ describe('deprecated aliases', () => {
     const sb = sandbox('alias-loose');
     const r = run(sb, ['research', '--loose', '--prompt', 'a topic']);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /^agy-staff: --loose is deprecated; use --unrestricted$/m);
+    assert.match(r.stderr, /^agy-crew: --loose is deprecated; use --unrestricted$/m);
     // research is unrestricted by default in 0.2 round 2, so --loose is now
     // redundant; what the alias must still do is resolve and warn, not die
     assert.match(r.stdout, /profile: unrestricted/);

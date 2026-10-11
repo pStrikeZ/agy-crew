@@ -1,5 +1,5 @@
 # per-repo runtime state written by the companion (jobs, logs, conversation ids)
-.agy-staff/
+.agy-crew/
 
 node_modules/
 .DS_Store

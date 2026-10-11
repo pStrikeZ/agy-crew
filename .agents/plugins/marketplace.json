@@ -1,11 +1,11 @@
 {
-  "name": "agy-staff",
+  "name": "agy-crew",
   "interface": {
-    "displayName": "Agy Staff"
+    "displayName": "Agy Crew"
   },
   "plugins": [
     {
-      "name": "agy",
+      "name": "agy-crew",
       "source": {
         "source": "local",
         "path": "."

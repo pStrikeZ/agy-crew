@@ -7,7 +7,7 @@ import { sandbox, run, jobIdOf, waitForCalls, COMPANION } from './helpers.mjs';
 const body = 'FULL_REPORT_ONLY_IN_DELIVERY\n' + '\u62a5\u544a\u5185\u5bb9😀'.repeat(4500);
 function storedJob(status, extra = {}) {
   const sb = sandbox(`terminal-${status}`);
-  const dir = path.join(sb.repo, '.agy-staff');
+  const dir = path.join(sb.repo, '.agy-crew');
   fs.mkdirSync(dir, { recursive: true });
   const job = { id: 'example-job', mode: 'research', status, pid: 99999999,
     started_at: '2026-09-07T00:00:00Z', finished_at: '2026-09-07T00:02:00Z',

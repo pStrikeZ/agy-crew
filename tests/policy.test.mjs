@@ -1,6 +1,6 @@
 /**
  * Project policy (`setup --restrict`): per-repo default profiles in
- * .agy-staff/config.json.
+ * .agy-crew/config.json.
  *
  * Precedence under test: CLI flag > project policy > built-in default.
  * The policy is declarative (listed modes restricted, everything else falls
@@ -13,7 +13,7 @@ import path from 'node:path';
 import { sandbox, run, waitForCalls } from './helpers.mjs';
 
 function configFile(sb) {
-  return path.join(sb.repo, '.agy-staff', 'config.json');
+  return path.join(sb.repo, '.agy-crew', 'config.json');
 }
 
 describe('setup --restrict writes the project policy', () => {
@@ -118,7 +118,7 @@ describe('profile precedence: flag > project policy > default', () => {
 
   test('a corrupt config dies instead of being silently ignored', () => {
     const sb = sandbox('policy-corrupt');
-    fs.mkdirSync(path.join(sb.repo, '.agy-staff'), { recursive: true });
+    fs.mkdirSync(path.join(sb.repo, '.agy-crew'), { recursive: true });
     fs.writeFileSync(configFile(sb), '{nope');
     const r = run(sb, ['review', '--prompt', 'Review the tree']);
     assert.notEqual(r.code, 0);

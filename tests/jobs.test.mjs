@@ -44,9 +44,9 @@ describe('background job lifecycle', () => {
     assert.match(res.stdout, /fake answer/);
     // research is unrestricted by default in round 2 — the telemetry proving it
     // lives in the worker log, never in the delivered result
-    assert.doesNotMatch(res.stdout, /\[agy-staff\]/);
-    assert.doesNotMatch(jobResultFile(sb, id), /\[agy-staff\]/);
-    assert.match(jobLog(sb, id), /\[agy-staff\] mode=research profile=unrestricted/);
+    assert.doesNotMatch(res.stdout, /\[agy-crew\]/);
+    assert.doesNotMatch(jobResultFile(sb, id), /\[agy-crew\]/);
+    assert.match(jobLog(sb, id), /\[agy-crew\] mode=research profile=unrestricted/);
 
     // result with no id falls back to the latest finished job
     const latest = run(sb, ['result']);
@@ -77,8 +77,8 @@ describe('continue inherits the resumed mode default', () => {
     const cont = run(sb, ['continue', '--prompt', 'and what about 3 plus 3?']);
     assert.equal(cont.code, 0, cont.stderr);
     assert.match(cont.stdout, /fake answer/);
-    assert.doesNotMatch(cont.stdout, /\[agy-staff\]/);
-    assert.match(cont.stderr, /\[agy-staff\] mode=ask profile=restricted/);
+    assert.doesNotMatch(cont.stdout, /\[agy-crew\]/);
+    assert.match(cont.stderr, /\[agy-crew\] mode=ask profile=restricted/);
     assert.match(cont.stderr, /^conversation: conv-1 \(follow up with --continue\)$/m);
     assert.doesNotMatch(cont.stdout, /Started background/);
 
@@ -111,7 +111,7 @@ describe('continue inherits the resumed mode default', () => {
     const sb = sandbox('continue-empty');
     const none = run(sb, ['continue', '--prompt', 'text with no history']);
     assert.notEqual(none.code, 0);
-    assert.match(none.stderr, /no previous agy-staff conversation recorded/);
+    assert.match(none.stderr, /no previous agy-crew conversation recorded/);
   });
 });
 
@@ -119,7 +119,7 @@ describe('cross-context liveness checks (issue #11)', () => {
   test('pidAlive=false without result warns of permission/sandbox context mismatch and recovers when pid is visible', () => {
     const sb = sandbox('simulated-pid-liveness');
     const id = 'research-simulated-liveness';
-    const stateDir = path.join(sb.repo, '.agy-staff');
+    const stateDir = path.join(sb.repo, '.agy-crew');
     const stateFile = path.join(stateDir, 'state.json');
     fs.mkdirSync(stateDir);
     // A static record prevents worker writes from overwriting the simulated PID.

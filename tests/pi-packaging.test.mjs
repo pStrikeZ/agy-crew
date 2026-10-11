@@ -17,12 +17,12 @@ test('Pi adapters are current; canonical names and all relative resources remain
   assert.deepEqual(generatePiSkills({ check: true }).changed, []);
   for (const name of names) {
     const canonical = fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
-    const generated = fs.readFileSync(path.join(ROOT, 'pi-skills', `agy-${name}`, 'SKILL.md'), 'utf8');
+    const generated = fs.readFileSync(path.join(ROOT, 'pi-skills', `agy-crew-${name}`, 'SKILL.md'), 'utf8');
     assert.match(canonical, new RegExp(`^name: ${name}$`, 'm'));
-    assert.match(generated, new RegExp(`^name: agy-${name}$`, 'm'));
+    assert.match(generated, new RegExp(`^name: agy-crew-${name}$`, 'm'));
     assert.doesNotMatch(generated, /^(?:allowed-tools|argument-hint|user-invocable):/m);
-    assert.doesNotMatch(generated, /\/agy:|\$agy:/);
-    const skillDir = path.join(ROOT, 'pi-skills', `agy-${name}`);
+    assert.doesNotMatch(generated, /\/agy-crew:|\$agy-crew:/);
+    const skillDir = path.join(ROOT, 'pi-skills', `agy-crew-${name}`);
     for (const match of generated.matchAll(/`((?:\.\.\/|references\/)[^`]*\.md)`/g)) {
       assert.ok(fs.existsSync(path.resolve(skillDir, match[1])), `${name}: broken reference ${match[1]}`);
     }
@@ -38,11 +38,11 @@ test('generation is deterministic, copies assets, detects drift and rejects stal
   fs.writeFileSync(asset, Buffer.from([0, 128, 255]));
   generatePiSkills({ root });
   assert.deepEqual(generatePiSkills({ root }).changed, []);
-  assert.deepEqual(fs.readFileSync(path.join(root, 'pi-skills', 'agy-ask', 'asset.bin')), fs.readFileSync(asset));
+  assert.deepEqual(fs.readFileSync(path.join(root, 'pi-skills', 'agy-crew-ask', 'asset.bin')), fs.readFileSync(asset));
   const source = path.join(root, 'skills', 'ask', 'SKILL.md');
   fs.appendFileSync(source, '\nNew canonical guidance.\n');
   assert.throws(() => generatePiSkills({ root, check: true }), /Stale Pi skills/);
-  assert.deepEqual(generatePiSkills({ root }).changed, [path.join('pi-skills', 'agy-ask', 'SKILL.md')]);
+  assert.deepEqual(generatePiSkills({ root }).changed, [path.join('pi-skills', 'agy-crew-ask', 'SKILL.md')]);
   const unexpected = path.join(root, 'pi-skills', 'obsolete.md');
   fs.writeFileSync(unexpected, 'user edit');
   assert.throws(() => generatePiSkills({ root }), /Unexpected generated files/);
@@ -62,7 +62,7 @@ test('reference notices preserve frontmatter and direct output edits fail withou
   const body = '\n# Guide\nKeep this content and its permissions intact.\n';
   fs.writeFileSync(source, frontmatter + body);
   generatePiSkills({ root });
-  const output = path.join(root, 'pi-skills', 'agy-ask', 'references', 'guide.md');
+  const output = path.join(root, 'pi-skills', 'agy-crew-ask', 'references', 'guide.md');
   const notice = '<!-- Generated from skills/ask/references/guide.md; run npm run generate:pi. Do not edit here. -->';
   assert.equal(fs.readFileSync(output, 'utf8'), frontmatter + '\n' + notice + '\n' + body);
   const handEdited = fs.readFileSync(output, 'utf8') + '\nA direct edit to generated output.\n';
@@ -77,7 +77,7 @@ test('Pi manifest exposes only branded skills and stays aligned with plugin vers
   assert.deepEqual(manifest.pi, { skills: ['./pi-skills'] });
   for (const host of ['.claude-plugin', '.codex-plugin']) {
     const plugin = json(path.join(ROOT, host, 'plugin.json'));
-    assert.equal(plugin.name, 'agy');
+    assert.equal(plugin.name, 'agy-crew');
     assert.equal(manifest.version, plugin.version);
   }
 });
@@ -90,19 +90,19 @@ test('generation preserves canonical prose and adds only shared compatibility co
   generatePiSkills({ root });
   for (const [name, original] of before) {
     assert.deepEqual(fs.readFileSync(path.join(root, 'skills', name, 'SKILL.md')), original);
-    const rendered = fs.readFileSync(path.join(root, 'pi-skills', `agy-${name}`, 'SKILL.md'), 'utf8');
+    const rendered = fs.readFileSync(path.join(root, 'pi-skills', `agy-crew-${name}`, 'SKILL.md'), 'utf8');
     let body = original.toString().replace(/^---\n[\s\S]*?\n---\n/, '');
     for (const peer of names) {
-      body = body.replaceAll(`/agy:${peer}`, `/skill:agy-${peer}`)
-        .replaceAll(`$agy:${peer}`, `/skill:agy-${peer}`)
-        .replaceAll(`../${peer}/`, `../agy-${peer}/`)
-        .replaceAll(`<plugin-root>/skills/${peer}/`, `<plugin-root>/pi-skills/agy-${peer}/`);
+      body = body.replaceAll(`/agy-crew:${peer}`, `/skill:agy-crew-${peer}`)
+        .replaceAll(`$agy-crew:${peer}`, `/skill:agy-crew-${peer}`)
+        .replaceAll(`../${peer}/`, `../agy-crew-${peer}/`)
+        .replaceAll(`<plugin-root>/skills/${peer}/`, `<plugin-root>/pi-skills/agy-crew-${peer}/`);
     }
     const renderedBody = rendered.replace(/^---\n[\s\S]*?\n---\n\n<!-- Generated[^\n]+-->\n/, '');
     assert.equal(renderedBody, body + '\n' + COMPATIBILITY_CONTEXT);
     assert.equal(rendered.split(COMPATIBILITY_CONTEXT).length, 2, 'append context exactly once');
   }
-  const setup = fs.readFileSync(path.join(root, 'pi-skills', 'agy-jobs', 'references', 'setup.md'), 'utf8');
+  const setup = fs.readFileSync(path.join(root, 'pi-skills', 'agy-crew-jobs', 'references', 'setup.md'), 'utf8');
   const canonicalSetup = fs.readFileSync(path.join(root, 'skills', 'jobs', 'references', 'setup.md'), 'utf8');
   assert.equal(canonicalSetup, fs.readFileSync(path.join(ROOT, 'skills', 'jobs', 'references', 'setup.md'), 'utf8'), 'canonical source unchanged');
   assert.match(setup, /^<!-- Generated from skills\/jobs\/references\/setup\.md; run npm run generate:pi\. Do not edit here\. -->\n\n/);
@@ -112,7 +112,7 @@ test('generation preserves canonical prose and adds only shared compatibility co
   fs.writeFileSync(source, newBody);
   assert.throws(() => generatePiSkills({ root, check: true }), /Stale Pi skills/);
   generatePiSkills({ root });
-  const updated = fs.readFileSync(path.join(root, 'pi-skills', 'agy-staffer', 'SKILL.md'), 'utf8');
+  const updated = fs.readFileSync(path.join(root, 'pi-skills', 'agy-crew-staffer', 'SKILL.md'), 'utf8');
   assert.match(updated, /## Entirely revised workflow/);
   assert.match(updated, /Use FutureTool to do a new operation; ask for permission first\./);
   assert.ok(updated.endsWith(COMPATIBILITY_CONTEXT));
@@ -124,13 +124,13 @@ test('new personas need no mapping table and prefix-related names do not corrupt
   for (const name of ['ask', 'ask-more']) {
     const dir = path.join(root, 'skills', name);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Test /agy:ask-more and $agy:ask.\n---\nRead ../ask/SKILL.md; run node companion.mjs ask --prompt hello.\n`);
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Test /agy-crew:ask-more and $agy-crew:ask.\n---\nRead ../ask/SKILL.md; run node companion.mjs ask --prompt hello.\n`);
   }
   generatePiSkills({ root });
-  const more = fs.readFileSync(path.join(root, 'pi-skills', 'agy-ask-more', 'SKILL.md'), 'utf8');
-  assert.match(more, /name: agy-ask-more/);
-  assert.match(more, /Test \/skill:agy-ask-more and \/skill:agy-ask\./);
-  assert.match(more, /\.\.\/agy-ask\/SKILL.md/);
+  const more = fs.readFileSync(path.join(root, 'pi-skills', 'agy-crew-ask-more', 'SKILL.md'), 'utf8');
+  assert.match(more, /name: agy-crew-ask-more/);
+  assert.match(more, /Test \/skill:agy-crew-ask-more and \/skill:agy-crew-ask\./);
+  assert.match(more, /\.\.\/agy-crew-ask\/SKILL.md/);
   assert.match(more, /companion.mjs ask --prompt hello/);
 });
 
@@ -146,11 +146,11 @@ test('actual npm archive contains resources and runs ask + detached job collecti
   }
   assert.ok(!packed.has('adapters/harness-compatibility.md'), 'adapters should not be packed');
   assert.ok(!packed.has('docs/PI.md'), 'docs/PI.md should not be packed');
-  assert.equal([...packed].some(file => /^(tests|assets|\.agy-staff|\.github)\//.test(file)), false);
+  assert.equal([...packed].some(file => /^(tests|assets|\.agy-crew|\.github)\//.test(file)), false);
   // Read the same command template the host sees, resolve from the installed
   // skill directory, then execute that installed companion from another cwd.
   function invoke(skill, args, extraEnv = {}) {
-    const skillDir = path.join(dir, 'pi-skills', `agy-${skill}`);
+    const skillDir = path.join(dir, 'pi-skills', `agy-crew-${skill}`);
     const text = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
     const match = /node "<skill-dir>\/([^"\n]+)"/.exec(text);
     assert.ok(match, `missing companion command in ${skill}`);

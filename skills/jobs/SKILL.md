@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*), AskUserQuestion
 
 # agy jobs
 
-Manage background staffer/research/review/implement jobs. State is per repository in `.agy-staff/`. Only ask runs synchronously.
+Manage background staffer/research/review/implement jobs. State is per repository in `.agy-crew/`. Only ask runs synchronously.
 
 This file lives at `<plugin-root>/skills/jobs/SKILL.md`:
 

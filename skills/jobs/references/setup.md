@@ -12,7 +12,7 @@ node "<skill-dir>/../../companion/agy-companion.mjs" setup
 
 If it reports the agy CLI itself is missing, stop and relay its install guidance — do not attempt to install agy yourself.
 
-**Step 2 — per-repo policy.** Ask the user with `AskUserQuestion` (multiSelect over `staffer`, `research`, `review`, `implement`, plus a "None — keep the defaults (Recommended)" option): which modes should default to the **restricted** profile in this repository? Make clear this is a per-repo, per-machine preference (`.agy-staff/config.json`, git-ignored, not shared with the team), that a `--restricted`/`--unrestricted` flag on a call still overrides it, and that it is a run policy, not a security boundary — untrusted input still calls for an isolated checkout. Then apply their answer:
+**Step 2 — per-repo policy.** Ask the user with `AskUserQuestion` (multiSelect over `staffer`, `research`, `review`, `implement`, plus a "None — keep the defaults (Recommended)" option): which modes should default to the **restricted** profile in this repository? Make clear this is a per-repo, per-machine preference (`.agy-crew/config.json`, git-ignored, not shared with the team), that a `--restricted`/`--unrestricted` flag on a call still overrides it, and that it is a run policy, not a security boundary — untrusted input still calls for an isolated checkout. Then apply their answer:
 
 ```bash
 node "<skill-dir>/../../companion/agy-companion.mjs" setup --restrict review,research   # their selection

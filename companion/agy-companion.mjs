@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * agy-companion — the single brain of the agy-staff plugin.
+ * agy-companion — the single brain of the agy-crew plugin.
  *
  * Wraps Google's Antigravity CLI (`agy`) so Claude Code and OpenAI Codex can
  * delegate work to Gemini via five modes: staffer (general-purpose), research,
@@ -25,7 +25,7 @@
  *                                   command allowlist used by restricted runs
  *   setup --restrict <modes|none>   optional: per-repo policy — make the listed
  *                                   modes default to the restricted profile in
- *                                   this repository (.agy-staff/config.json)
+ *                                   this repository (.agy-crew/config.json)
  *   _worker <job-id>                (internal) background job executor
  *
  * Uniform flags:
@@ -55,7 +55,7 @@
  * unrestricted by default, so they work out of the box with no setup;
  * --restricted is the hardening opt-in that relies on the evidence-gathering
  * allowlist installed by `setup`. ask is tool-free and always restricted.
- * Profile precedence: CLI flag > project policy (.agy-staff/config.json,
+ * Profile precedence: CLI flag > project policy (.agy-crew/config.json,
  * written by `setup --restrict`) > built-in default. The policy is a run
  * policy for per-repo consistency, not a security boundary.
  * The guardrails against irreversible side effects live in the prompt
@@ -65,7 +65,7 @@
  * without ever blocking.
  *
  * Output split: stdout carries the deliverable — agy's response plus any guard
- * warning about the working tree. The `[agy-staff]` telemetry line (mode,
+ * warning about the working tree. The `[agy-crew]` telemetry line (mode,
  * profile, model, duration, tokens, conversation id) goes to stderr, and for
  * background jobs into `jobs/<id>.log`; it is metadata for the calling agent,
  * never something to show the user.
@@ -92,6 +92,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { PRODUCT, STATE_DIR_NAME } from './identity.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
@@ -167,7 +168,7 @@ function normalizeModel(raw, effort) {
     if (!efforts.includes(e)) {
       // e.g. gemini-3.1-pro has no medium: fall back to its highest tier
       const fallback = efforts[efforts.length - 1];
-      process.stderr.write(`agy-staff: ${name} has no "${e}" effort; using ${name}-${fallback}\n`);
+      process.stderr.write(`${PRODUCT}: ${name} has no "${e}" effort; using ${name}-${fallback}\n`);
       e = fallback;
     }
     return `${name}-${e}`;
@@ -240,7 +241,7 @@ const REVIEW_JSON_SCHEMA = JSON.stringify({
 let inWorker = false;
 function die(msg, code = 1) {
   if (inWorker) throw new Error(msg);
-  process.stderr.write(`agy-staff error: ${msg}\n`);
+  process.stderr.write(`${PRODUCT} error: ${msg}\n`);
   throw Object.assign(new Error(msg), { exitCode: code, alreadyPrinted: true });
 }
 
@@ -262,7 +263,7 @@ function repoRoot() {
 }
 
 function stateDir() {
-  return path.join(repoRoot(), '.agy-staff');
+  return path.join(repoRoot(), STATE_DIR_NAME);
 }
 
 function statePath() {
@@ -307,7 +308,7 @@ function loadProjectConfig() {
   return cfg;
 }
 
-/** Create .agy-staff/ on first use and keep it out of `git status`.
+/** Create .agy-crew/ on first use and keep it out of `git status`.
  *  .git/info/exclude is repo-local and untracked — never the team's
  *  .gitignore. Best-effort: a read-only .git must not block a run. */
 function ensureStateDir() {
@@ -318,7 +319,7 @@ function ensureStateDir() {
       const p = sh('git', ['rev-parse', '--git-path', 'info/exclude']);
       if (p.code === 0 && p.out) {
         try {
-          fs.appendFileSync(path.resolve(p.out), '.agy-staff/\n');
+          fs.appendFileSync(path.resolve(p.out), STATE_DIR_NAME + '/\n');
         } catch {}
       }
     }
@@ -447,7 +448,7 @@ function packedArgumentDie(name, raw) {
   const shown = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
   die(
     `unknown flag --${first}: the whole string "${shown}" arrived as a single argument. ` +
-      `agy-staff parses argv exactly as the shell delivers it and never splits an argument into flags — ` +
+      `${PRODUCT} parses argv exactly as the shell delivers it and never splits an argument into flags — ` +
       `pass each flag as its own argument and put the task text in --prompt, ` +
       `e.g. \`review --restricted --prompt "Review PR #730"\`.`
   );
@@ -491,7 +492,7 @@ function parseFlags(argv, { taskCommand = false } = {}) {
       if (FLAG_ALIASES[name]) {
         if (!warnedAliases.has(name)) {
           warnedAliases.add(name);
-          process.stderr.write(`agy-staff: --${name} is deprecated; use --${FLAG_ALIASES[name]}\n`);
+          process.stderr.write(`${PRODUCT}: --${name} is deprecated; use --${FLAG_ALIASES[name]}\n`);
         }
         name = FLAG_ALIASES[name];
       }
@@ -811,7 +812,7 @@ function triageResult({ payload, stderr, exit }, mode, profile, profileSource, r
     if (response) {
       // Preserve response text and diagnostics for the orchestrator to assess.
       process.stderr.write(
-        `agy-staff warning: agy reported status ${payload.status || 'unknown'} (exit ${exit}) ` +
+        `${PRODUCT} warning: agy reported status ${payload.status || 'unknown'} (exit ${exit}) ` +
           'but returned response text — delivering it for assessment.\n' +
           (payload.error ? `agy error: ${payload.error}\n` : '') +
           (stderr ? `agy stderr: ${stderr}\n` : '')
@@ -860,7 +861,7 @@ function triageResult({ payload, stderr, exit }, mode, profile, profileSource, r
   if (profile === 'restricted') {
     const cause =
       profileSource === 'project'
-        ? 'This run was restricted by the project policy in .agy-staff/config.json'
+        ? 'This run was restricted by the project policy in .agy-crew/config.json'
         : profileSource === 'inherited' ? 'This continuation inherited the restricted profile' : 'This run used `--restricted`';
     const relax =
       profileSource === 'project'
@@ -913,7 +914,7 @@ function resolveRun(mode, opts, priorJob = null) {
     model = DEFAULTS.model[mode];
   }
 
-  // profile: CLI flag > project policy (.agy-staff/config.json) > built-in default
+  // profile: CLI flag > project policy (.agy-crew/config.json) > built-in default
   if (opts.restricted && opts.unrestricted) die('--restricted and --unrestricted are mutually exclusive');
   const policyProfile = mode === 'ask' ? null : loadProjectConfig()?.profiles?.[mode] || null;
   let profile;
@@ -929,7 +930,7 @@ function resolveRun(mode, opts, priorJob = null) {
     profileSource = 'default';
   }
   if (mode === 'ask' && (opts.unrestricted || opts.restricted)) {
-    if (opts.unrestricted) process.stderr.write('agy-staff: ask is tool-free; --unrestricted ignored\n');
+    if (opts.unrestricted) process.stderr.write(PRODUCT + ': ask is tool-free; --unrestricted ignored\n');
     profile = 'restricted';
   }
 
@@ -959,7 +960,7 @@ function resolveRun(mode, opts, priorJob = null) {
     if (!opts.model && !opts.effort && prior.model) model = prior.model;
     if (!opts.restricted && !opts.unrestricted && prior.profile) { profile = prior.profile; profileSource = 'inherited'; }
   }
-  if (profileSource === 'project') process.stderr.write(`agy-staff: profile=${profile} set by project policy (${configPath()})\n`);
+  if (profileSource === 'project') process.stderr.write(`${PRODUCT}: profile=${profile} set by project policy (${configPath()})\n`);
   return { mode, model, profile, profileSource, background, timeout, conversation, parentJobId: prior?.id || null, originalCwd: prior?.cwd || null };
 }
 
@@ -1063,7 +1064,7 @@ function treeReportApplies(resolved) {
 function implementDispatchWarning() {
   if (!inGitRepo()) {
     process.stderr.write(
-      'agy-staff warning: not a git repository — agy\'s edits cannot be reviewed or rolled back via git.\n' +
+      PRODUCT + ' warning: not a git repository — agy\'s edits cannot be reviewed or rolled back via git.\n' +
         'Proceeding anyway; back up anything you care about, or run implement from inside a repository.\n'
     );
   }
@@ -1161,7 +1162,7 @@ async function executeRun(resolved, prompt, opts, execution = null) {
   // background workers have stdout and stderr both wired to jobs/<id>.log, so
   // it lands there as the job's provenance record.
   process.stderr.write(
-    `[agy-staff] mode=${resolved.mode} profile=${resolved.profile} model=${resolved.model} ` +
+    `[${PRODUCT}] mode=${resolved.mode} profile=${resolved.profile} model=${resolved.model} ` +
       `agy_status=${payload.status || 'unknown'} agy_exit=${result.exit} ` +
       `duration=${payload.duration_seconds ?? '?'}s turns=${payload.num_turns ?? '?'} tokens(${fmtTokens(payload.usage)})\n` +
       `conversation: ${payload.conversation_id || 'unknown'} (follow up with --continue)\n`
@@ -1225,7 +1226,7 @@ async function dispatch(resolved, prompt, opts) {
     state.jobs ||= [];
     state.jobs.push(record);
   });
-  fs.appendFileSync(logFile, `[agy-staff] dispatch registered ${jobId} at ${record.started_at}\n`);
+  fs.appendFileSync(logFile, `[${PRODUCT}] dispatch registered ${jobId} at ${record.started_at}\n`);
 
   const logFd = fs.openSync(logFile, 'a');
   // detached on every platform: on POSIX it isolates the process group; on
@@ -1269,7 +1270,7 @@ async function workerMain(jobId) {
   let job, cancelTimer;
   try {
     job = updateJob(jobId, { worker_started_at: new Date().toISOString(), worker_pid: process.pid, worker_identity: processIdentity(process.pid) });
-    process.stderr.write(`[agy-staff] worker started ${jobId} pid=${process.pid} at ${job.worker_started_at}\n`);
+    process.stderr.write(`[${PRODUCT}] worker started ${jobId} pid=${process.pid} at ${job.worker_started_at}\n`);
     if (job.status !== 'running') return;
     const checkCancellation = () => {
       if (job.cancel_requested_at || fs.existsSync(job.spec_file + '.cancel')) controller.abort();
@@ -1372,7 +1373,7 @@ function cmdStatus(opts) {
   }
 
   if (!jobs.length) {
-    process.stdout.write('No agy-staff jobs recorded in this repository.\n');
+    process.stdout.write('No ' + PRODUCT + ' jobs recorded in this repository.\n');
     return;
   }
   process.stdout.write('id | mode | status | started | finished\n');
@@ -1406,7 +1407,7 @@ async function cmdWait(opts) {
     return jobs.length ? jobs[jobs.length - 1] : null;
   };
   let job = findJob();
-  if (!job) die(id ? `no job ${id} in this repository` : 'no agy-staff jobs recorded in this repository');
+  if (!job) die(id ? `no job ${id} in this repository` : `no ${PRODUCT} jobs recorded in this repository`);
 
   const POLL_MS = 200;
   const start = Date.now();
@@ -1424,7 +1425,7 @@ async function cmdWait(opts) {
 function findJob(id) {
   const jobs = loadState().jobs || [];
   const job = id ? jobs.find((j) => j.id === id) : jobs.at(-1);
-  if (!job) die(id ? `no job ${id} in this repository` : 'no agy-staff jobs recorded in this repository');
+  if (!job) die(id ? `no job ${id} in this repository` : `no ${PRODUCT} jobs recorded in this repository`);
   return job;
 }
 
@@ -1658,7 +1659,7 @@ function cmdContinue(opts) {
   const mode = prior?.mode || legacyMode || (state.last?.id === targetId ? state.last?.mode : null);
   const conversation = prior?.conversation_id || targetId;
   if (opts.job) refuseRunningFollowUp(state, prior?.conversation_id, prior?.id);
-  if (!mode || !conversation) die('no previous agy-staff conversation recorded in this repository for this target; use restart <job-id> when no conversation is available');
+  if (!mode || !conversation) die(`no previous ${PRODUCT} conversation recorded in this repository for this target; use restart <job-id> when no conversation is available`);
   if (opts.job && opts.conversation && opts.conversation !== prior.conversation_id) die('--job and --conversation identify different conversations');
   if (opts.job && !prior.conversation_id) die('this job has no known conversation; use restart <job-id>');
   const task = taskText(opts);
@@ -1736,7 +1737,7 @@ function applyProjectPolicy(value) {
   for (const m of modes) process.stdout.write(`  ${m}: restricted (default for this repository)\n`);
   process.stdout.write(
     'Unlisted modes keep the built-in default (unrestricted). A --restricted/--unrestricted flag on a\n' +
-      'call still overrides the policy. This is a per-repo, per-machine preference (.agy-staff/ is\n' +
+      'call still overrides the policy. This is a per-repo, per-machine preference (.agy-crew/ is\n' +
       'normally git-ignored, so it is not shared with the team) and a run policy, not a security\n' +
       'boundary — for untrusted input use an isolated checkout.\n\n'
   );
@@ -1850,7 +1851,7 @@ function printSetupNotes() {
       '  default (--dangerously-skip-permissions), and unrestricted runs ignore permission rules entirely.\n' +
       '- Per-repo policy: `setup --restrict <mode,...>` (e.g. review,research) makes those modes default\n' +
       '  to the restricted profile in THIS repository only; `setup --restrict none` clears it. The policy\n' +
-      '  lives in .agy-staff/config.json (normally git-ignored — a personal preference, not shared with\n' +
+      '  lives in .agy-crew/config.json (normally git-ignored — a personal preference, not shared with\n' +
       '  the team), and a --restricted/--unrestricted flag on a call always wins. It is a run policy for\n' +
       '  consistency, not a security boundary.\n' +
       '- Some agy tools ignore allow-rules in headless mode entirely and only work unrestricted. If a\n' +
@@ -1905,6 +1906,6 @@ function main() {
 }
 
 Promise.resolve().then(main).catch((error) => {
-  if (!error.alreadyPrinted) process.stderr.write(`agy-staff error: ${error?.message || String(error)}\n`);
+  if (!error.alreadyPrinted) process.stderr.write(`${PRODUCT} error: ${error?.message || String(error)}\n`);
   process.exitCode = error.exitCode || 1;
 });

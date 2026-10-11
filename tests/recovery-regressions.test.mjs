@@ -7,7 +7,7 @@ import { sandbox, run, jobIdOf, waitForCalls, agyCalls, promptOf, COMPANION } fr
 import { processIdentity, stopExecution } from '../companion/stream-worker.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const stateFile = sb => path.join(sb.repo, '.agy-staff/state.json');
+const stateFile = sb => path.join(sb.repo, '.agy-crew/state.json');
 const state = sb => JSON.parse(fs.readFileSync(stateFile(sb), 'utf8'));
 const job = (sb, id) => {
   const record = state(sb).jobs.find(j => j.id === id);
@@ -34,7 +34,7 @@ test('cancel preserves crash diagnostics and never signals an unrelated executio
   const sb = sandbox('cancel-crash');
   const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   t.after(() => unrelated.kill('SIGKILL'));
-  const dir = path.join(sb.repo, '.agy-staff'); fs.mkdirSync(dir);
+  const dir = path.join(sb.repo, '.agy-crew'); fs.mkdirSync(dir);
   const record = { id: 'crashed', mode: 'research', status: 'running', pid: 99999999, agy_pid: unrelated.pid,
     result_file: path.join(dir, 'result'), log_file: path.join(dir, 'log') };
   fs.writeFileSync(stateFile(sb), JSON.stringify({ jobs: [record] }));
@@ -49,7 +49,7 @@ test('cancel rejects a mismatched worker identity without signaling that PID', a
   const sb = sandbox('cancel-identity');
   const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   t.after(() => unrelated.kill('SIGKILL'));
-  const dir = path.join(sb.repo, '.agy-staff'); fs.mkdirSync(dir);
+  const dir = path.join(sb.repo, '.agy-crew'); fs.mkdirSync(dir);
   const record = { id: 'reused', status: 'running', pid: unrelated.pid, agy_pid: unrelated.pid,
     worker_identity: { pid: unrelated.pid, born: 'an earlier process' }, spec_file: path.join(dir, 'spec'), result_file: path.join(dir, 'result') };
   fs.writeFileSync(stateFile(sb), JSON.stringify({ jobs: [record] }));
@@ -234,7 +234,7 @@ test('unknown conversations and jobs from another worktree fail without launchin
   const other = path.join(sb.root, 'other-worktree');
   assert.equal(spawnSync('git', ['worktree', 'add', '--detach', other], { cwd: sb.repo }).status, 0);
   const r = run({ ...sb, repo: other }, ['continue', '--conversation', job(sb, id).conversation_id, '--prompt', 'follow up']);
-  assert.equal(r.code, 1); assert.match(r.stderr, /no previous agy-staff conversation/);
+  assert.equal(r.code, 1); assert.match(r.stderr, /no previous agy-crew conversation/);
   assert.equal(agyCalls(sb).length, count);
 });
 

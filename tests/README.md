@@ -38,8 +38,8 @@ itself. Node 24.7 verified.
 
 CLI behavior is exercised through subprocesses, because the companion calls `main()` on import. Observation and lock tests also import their modules directly. CLI tests build isolated sandboxes (`tests/helpers.mjs`):
 
-- a throwaway git repo under `os.tmpdir()` (so `.agy-staff/` state never lands in
-  the real repo), with `.agy-staff/` added to `.git/info/exclude` — since 0.4 the
+- a throwaway git repo under `os.tmpdir()` (so `.agy-crew/` state never lands in
+  the real repo), with `.agy-crew/` added to `.git/info/exclude` — since 0.4 the
   companion does this itself on first use (`ensureStateDir`), the sandbox just
   pre-applies it so the companion's own state stays out of implement dirty-context prompts and review/research delta reports. The auto-exclude path itself is pinned in `dx.test.mjs`.
   `sandbox(label, { git: false })` skips the `git init` for the cases that must
@@ -63,7 +63,7 @@ blocked and instead report a working-tree delta — present when the fake `agy`
 touches a file, silent when it does not, scoped to what appeared during the run,
 and skipped entirely for `--restricted` runs); the reworded `--restricted`
 empty-response triage message (and the unrestricted case that must never suggest
-setup); the output split (the `[agy-staff]` telemetry line is asserted on stderr
+setup); the output split (the `[agy-crew]` telemetry line is asserted on stderr
 for foreground runs and in `jobs/<id>.log` for background ones, and asserted
 absent from stdout and from `jobs/<id>.result.md`); prompt-based `review`; job
 lifecycle (`status`/`result`/`cancel`);

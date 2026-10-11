@@ -33,8 +33,8 @@ describe('done_with_warnings: non-SUCCESS status with a complete response', () =
     });
     assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
     assert.match(r.stdout, /the full answer, produced before the failure/);
-    assert.match(r.stderr, /agy-staff warning: agy reported status ERROR/);
-    assert.doesNotMatch(r.stdout, /agy-staff warning/, 'the warning must not pollute the deliverable');
+    assert.match(r.stderr, /agy-crew warning: agy reported status ERROR/);
+    assert.doesNotMatch(r.stdout, /agy-crew warning/, 'the warning must not pollute the deliverable');
   });
 
   test('background (research): job ends done, wait exits 0 and prints the response', async () => {
@@ -49,7 +49,7 @@ describe('done_with_warnings: non-SUCCESS status with a complete response', () =
     const r = run(sb, ['wait', id]);
     assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
     assert.match(r.stdout, /survey results/);
-    assert.match(jobLog(sb, id), /agy-staff warning: agy reported status ERROR/);
+    assert.match(jobLog(sb, id), /agy-crew warning: agy reported status ERROR/);
   });
 });
 

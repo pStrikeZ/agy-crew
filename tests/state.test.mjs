@@ -13,7 +13,7 @@ import { sandbox, run, waitForJob, jobIdOf } from './helpers.mjs';
 
 test('corrupt state.json makes commands die instead of wiping state', () => {
   const sb = sandbox('corrupt-state');
-  const dir = path.join(sb.repo, '.agy-staff');
+  const dir = path.join(sb.repo, '.agy-crew');
   fs.mkdirSync(dir, { recursive: true });
   const stateFile = path.join(dir, 'state.json');
   const truncated = '{"conversations":{"research":"conv-9"},"jobs":[{"id":"resea';
