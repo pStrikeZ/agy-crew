@@ -289,10 +289,6 @@ agy-crew 是 Keli Wen 的 [agy-staff](https://github.com/keli-wen/agy-staff) v0.
 
 agy-crew 与 agy-staff 不能共存：两者的技能都会出现在 agent 面前，并写入同一份仓库状态，因此发现 agy-staff 时，`agy-crew install` 会拒绝运行并说明如何移除。没有原地升级：先卸载 agy-staff，再安装 agy-crew；`.agy-staff/` 中的状态不会迁移。想换回上游，请先运行 `agy-crew uninstall --all`。详见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 、[0.8.0](docs/releases/v0.8.0.md) 和 [0.9.0](docs/releases/v0.9.0.md) 发布说明。
 
-## 社区
-
-欢迎在 [LINUX DO](https://linux.do/) 交流使用经验。
-
 ## 参与贡献
 
 欢迎通过 issue 或 PR 提出问题、分享使用经验或改进代码。新增模式或参数会影响对外接口，建议先开 issue 讨论预期行为。

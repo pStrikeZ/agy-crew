@@ -288,10 +288,6 @@ What changed: the product was renamed throughout (plugin id `agy-crew@agy-crew`,
 
 agy-crew and agy-staff cannot coexist: both would show their skills to the agent and write the same per-repository state, so `agy-crew install` refuses to run when it finds agy-staff and prints how to remove it. There is no in-place upgrade; uninstall agy-staff, then install agy-crew. State in `.agy-staff/` is not migrated. To go back to upstream, run `agy-crew uninstall --all` first. See [LICENSE](LICENSE) and [NOTICE](NOTICE), and the [0.8.0](docs/releases/v0.8.0.md) and [0.9.0](docs/releases/v0.9.0.md) release notes.
 
-## Community
-
-- [LINUX DO](https://linux.do/) — A next-generation Linux community.
-
 ## Contributing
 
 Contributions are welcome — issues, bug reports and pull requests all help.
