@@ -41,8 +41,9 @@ export function acquireRun(req) {
     if (pick.needsLoan) {
       const lender = chooseLender(pool, { family: req.family, exclude: [pick.account] });
       if (!lender) {
-        return { error: { reason: 'quota_exhausted', retry_at: pick.retry_at,
-          message: `account ${pick.account} has no ${req.family} quota until ${pick.retry_at} and no other pool account is idle to lend a credential.` } };
+        const why = pick.reason === 'upstream_unavailable' ? 'is unavailable upstream (503)' : 'has no quota';
+        return { error: { reason: pick.reason, retry_at: pick.retry_at,
+          message: `account ${pick.account} ${why} for ${req.family} until ${pick.retry_at} and no other pool account is idle to lend a credential.` } };
       }
       const loan = beginLoan(pool, { borrower: pick.account, lender, jobId: req.jobId });
       return { held: { account: pick.account, lender, loanId: loan.id, pooled: true } };
@@ -67,17 +68,26 @@ export function acquireRun(req) {
 }
 
 const DEFAULT_COOLDOWN_MS = 60 * 60_000;
+const UNAVAILABLE_COOLDOWN_MS = 3 * 60_000;
 
-/** Record a quota cooldown for the account whose credential made the request.
- *  Returns the cooldown (retry_at is when the reported reset passes, or one
- *  hour when agy did not say). */
-export function recordCooldown(name, family, text, jobId) {
+/** Record a cooldown for the account whose credential made the request.
+ *  A quota failure lasts until the reported reset (one hour when agy did not
+ *  say); an upstream_unavailable (503) one is a few minutes, just long enough
+ *  that the next run picks another account, and never shortens a quota
+ *  cooldown that is still running. Returns the cooldown now in force. */
+export function recordCooldown(name, family, text, jobId, kind = 'quota_exhausted') {
   const now = Date.now();
-  const cooldown = { retry_at: new Date(now + (parseResetsIn(text) ?? DEFAULT_COOLDOWN_MS)).toISOString(),
-    reason: 'quota_exhausted', recorded_at: new Date(now).toISOString(), job_id: jobId || null,
+  const wait = kind === 'upstream_unavailable' ? UNAVAILABLE_COOLDOWN_MS : (parseResetsIn(text) ?? DEFAULT_COOLDOWN_MS);
+  const cooldown = { retry_at: new Date(now + wait).toISOString(),
+    reason: kind, recorded_at: new Date(now).toISOString(), job_id: jobId || null,
     message: String(text).trim().slice(0, 500) };
-  updatePool((pool) => { pool.cooldowns[`${name}|${family}`] = cooldown; });
-  return cooldown;
+  return updatePool((pool) => {
+    const key = `${name}|${family}`;
+    const current = pool.cooldowns[key];
+    if (kind === 'upstream_unavailable' && current && Date.parse(current.retry_at) > Date.parse(cooldown.retry_at)) return current;
+    pool.cooldowns[key] = cooldown;
+    return cooldown;
+  });
 }
 
 /** An authentication failure parks the account until `accounts login`. */

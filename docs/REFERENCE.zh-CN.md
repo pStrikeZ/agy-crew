@@ -286,7 +286,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 **`auto` 的选择规则。** 候选账号必须已启用、有令牌文件、没有认证错误、在该模型家族上没有生效的冷却，并且缓存的 Cloud Code 快照没有显示该家族所属配额池剩余为 0 且重置时间尚未到来。候选账号依次按以下条件排序：
 
 1. 当前租约最少（空闲账号优先于忙碌账号）；
-2. 已知的剩余配额比例最高（取短窗口和每周窗口中较小的一个；未知的排在所有已知且大于 0 的值之后）；
+2. 已知的剩余配额比例最高（取短窗口和每周窗口中较小的一个，按 5% 一档比较，额度相近的账号按最久未使用轮换；未知的排在所有已知且大于 0 的值之后）；
 3. `last_used_at` 最早；
 4. 添加顺序。
 
@@ -307,6 +307,12 @@ review --prompt "Review the patch at /tmp/change.patch"
 - **还没有会话 ID，且账号由 `auto` 选出**：释放租约，另选一个账号，用同一份提示词重试（故障转移）。
 - **已有会话 ID，且会话绑定在某个池账号上**：尝试凭据借用（见下文）。找到出借方时，任务带着这段提示继续："Your previous turn stopped because the account hit a quota limit. Continue the same task from where you stopped; do not repeat finished steps."
 - **其他情况任务失败**，原因为 `quota_exhausted`。后台任务在已有会话 ID 时状态为 `attention`，没有时为 `error`；结果中包含 `retry_at` 和恢复说明（`continue --job <id>`，在 `<retry_at>` 之后；其他池账号空闲时会自动借用凭据）。前台任务以相同信息退出：有会话 ID 时退出码为 5，否则为 1。是否继续由调用方决定，companion 不会循环重试。
+
+**上游 503（`upstream_unavailable`）。** agy 以 `UNAVAILABLE (code 503)` 或 `No capacity available for model ...` 放弃时（它自己已经重试约八次，大约两分钟），companion 会为该账号和模型家族记录一条 **3 分钟**的短冷却，原因为 `upstream_unavailable`，这样无论是本次运行还是之后单独的运行，下一次选择都会换一个账号。503 冷却不会缩短仍在生效的额度冷却。最多额外尝试 2 次：
+
+- **还没有会话 ID，或者任务从新会话开始且工作区没有变化**（`ask` 恒为如此，其他模式要求 `git status` 没有新增内容），并且账号由 `auto` 选出：用原始提示词在另一个账号上开一个新会话重跑。这是重写任务，不是继续任务。
+- **工作区已有改动，且会话绑定在某个池账号上**：与额度失败相同，走凭据借用继续。
+- **其他情况任务失败**，原因为 `upstream_unavailable`，已有会话 ID 时退出码为 5（后台任务为 `attention`），否则为 1。恢复说明会告诉调用方：agy 还什么都没做时重新开始任务（`restart <job>`），只有工作区已经有改动时才用 `continue`。显式指定的 `--account` 不会被换到其他账号。
 
 池账号上的**认证失败**（`401`、`403` 或 `unauthenticated`，并带有 auth、credential、login 或 token 字样）会记录该账号的认证错误。之后选择时会跳过它，`list` 显示 `needs login`，运行 `accounts login <name>` 后恢复。认证失败从不重试。
 
@@ -364,6 +370,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | 情况 | 原因与输出 | 退出码 |
 | --- | --- | --- |
 | `auto` 没有候选账号，或运行中遇到配额错误且没有可借用的出借方 | `quota_exhausted`，附 `retry_at`（没有候选时按账号分别列出） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
+| 模型返回 503 / 没有容量，且没有账号或出借方可以继续 | `upstream_unavailable`，附 `retry_at`（最后一次 503 之后 3 分钟） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
 | 池账号认证失败 | 账号标记为 `needs login`，不重试 | 按普通错误处理 |
 | 显式指定的 `--account <name>` 不存在、已停用、处于冷却或需要登录 | 启动前报错并说明原因 | 1 |
 | `--account` 与已绑定的会话冲突 | `conversation <id> belongs to account <x>` | 1 |
@@ -400,7 +407,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 ### 池账号配额用尽或需要登录
 
-池账号遇到配额错误时，companion 会记录冷却；如果还有其他账号，或有空闲账号可以出借凭据，任务会在运行内部恢复。否则任务以 `quota_exhausted` 结束，并附上 `retry_at`。认证失败不会重试：请在自己的终端里运行 `agy-crew accounts login <name>`。详见[账号池](#账号池)。
+池账号遇到配额错误时，companion 会记录冷却；如果还有其他账号，或有空闲账号可以出借凭据，任务会在运行内部恢复。否则任务以 `quota_exhausted` 结束，并附上 `retry_at`。遇到 503（`upstream_unavailable`）时账号冷却 3 分钟，没有改动过工作区的任务会换账号重跑；如果任务仍以 `upstream_unavailable` 结束且 agy 还什么都没做，请用 `restart <job>` 或改写提示词重新开始，不要 `continue`。认证失败不会重试：请在自己的终端里运行 `agy-crew accounts login <name>`。详见[账号池](#账号池)。
 
 ### 参数和任务被放进了同一个字符串
 

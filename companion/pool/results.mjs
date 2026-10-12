@@ -23,10 +23,22 @@ export function isAuthFailed(text) {
     ['auth', 'credential', 'login', 'token'].some((b) => t.includes(b));
 }
 
-/** 'quota_exhausted' | 'authentication_failed' | null */
+/** The model has no capacity right now ("UNAVAILABLE (code 503): No capacity
+ *  available for model X on the server"). agy has already retried internally. */
+export function isUpstreamUnavailable(text) {
+  const t = String(text || '').toLowerCase();
+  return (t.includes('unavailable') && t.includes('503')) || t.includes('no capacity available');
+}
+
+/** Failures that park an account for a model family: out of quota, or the
+ *  upstream has no capacity. */
+export const isCooldownReason = (reason) => reason === 'quota_exhausted' || reason === 'upstream_unavailable';
+
+/** 'quota_exhausted' | 'authentication_failed' | 'upstream_unavailable' | null */
 export function classifyFailureText(text) {
   if (isQuotaExhausted(text)) return 'quota_exhausted';
   if (isAuthFailed(text)) return 'authentication_failed';
+  if (isUpstreamUnavailable(text)) return 'upstream_unavailable';
   return null;
 }
 

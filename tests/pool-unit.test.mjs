@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyFailureText, isAuthFailed, isQuotaExhausted, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
+import { classifyFailureText, isAuthFailed, isQuotaExhausted, isUpstreamUnavailable, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
+import { recordCooldown } from '../companion/pool/lease.mjs';
 import { accountEnv } from '../companion/pool/env.mjs';
 import { chooseAccount, chooseLender } from '../companion/pool/select.mjs';
 import { parseQuotaSummary } from '../companion/pool/quota.mjs';
-import { validateAccountName } from '../companion/pool/state.mjs';
+import { loadPool, updatePool, validateAccountName } from '../companion/pool/state.mjs';
 import { emptyPool } from './pool-helpers.mjs';
 
 const NOW = Date.parse('2026-06-01T12:00:00Z');
@@ -38,6 +39,36 @@ test('quota and auth classifiers require both halves of their signature', () => 
   assert.equal(classifyFailureText('RESOURCE_EXHAUSTED Individual quota reached'), 'quota_exhausted');
   assert.equal(classifyFailureText('401 bad credential'), 'authentication_failed');
   assert.equal(classifyFailureText('something else'), null);
+});
+
+test('upstream 503 is its own failure kind and never shadows quota or auth', () => {
+  const real = 'Our servers are experiencing high traffic right now, please try again in a minute. (UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server)';
+  assert.equal(isUpstreamUnavailable(real), true);
+  assert.equal(isUpstreamUnavailable('UNAVAILABLE (code 503)'), true);
+  assert.equal(isUpstreamUnavailable('No capacity available for model x'), true);
+  assert.equal(isUpstreamUnavailable('UNAVAILABLE: try later'), false);
+  assert.equal(isUpstreamUnavailable('HTTP 503 from proxy'), false);
+  assert.equal(classifyFailureText(real), 'upstream_unavailable');
+  assert.equal(classifyFailureText(`RESOURCE_EXHAUSTED: Individual quota reached. ${real}`), 'quota_exhausted');
+  assert.equal(classifyFailureText(`401 unauthenticated token. ${real}`), 'authentication_failed');
+});
+
+test('a short 503 cooldown never shortens a quota cooldown that is still running', () => {
+  const later = new Date(Date.now() + 2 * 3_600_000).toISOString();
+  updatePool((pool) => { pool.cooldowns = { [`z|${FAMILY}`]: { retry_at: later, reason: 'quota_exhausted' } }; });
+  const kept = recordCooldown('z', FAMILY, 'UNAVAILABLE (code 503)', null, 'upstream_unavailable');
+  assert.equal(kept.retry_at, later);
+  assert.equal(loadPool().cooldowns[`z|${FAMILY}`].reason, 'quota_exhausted');
+
+  const fresh = recordCooldown('y', FAMILY, 'UNAVAILABLE (code 503)', 'job1', 'upstream_unavailable');
+  assert.equal(fresh.reason, 'upstream_unavailable');
+  assert.equal(Date.parse(fresh.retry_at) - Date.parse(fresh.recorded_at), 3 * 60_000);
+  assert.equal(loadPool().cooldowns[`y|${FAMILY}`].job_id, 'job1');
+
+  const quota = recordCooldown('y', FAMILY, 'Resets in 1h', null);
+  assert.equal(quota.reason, 'quota_exhausted', 'a quota failure replaces the short cooldown');
+  assert.equal(Date.parse(quota.retry_at) - Date.parse(quota.recorded_at), 3_600_000);
+  updatePool((pool) => { pool.cooldowns = {}; });
 });
 
 test('parseResetsIn reads compact and spaced duration tokens', () => {
@@ -84,6 +115,22 @@ test('auto selection: empty pool is live, then least loaded, most quota, least r
   assert.equal(choose(pool).auto, true);
 });
 
+test('auto selection rotates among accounts whose known quota is about equal', () => {
+  const pool = poolOf('a', 'b', 'c');
+  const quota = (remaining) => ({ pools: { gemini: { weekly: { remaining, reset_at: null } } } });
+  pool.quota.a = quota(0.99945);
+  pool.quota.b = quota(0.989);
+  pool.quota.c = quota(0.68);
+  assert.equal(choose(pool).account, 'a');
+  pool.accounts[0].last_used_at = '2026-06-01T11:00:00Z';
+  assert.equal(choose(pool).account, 'b', 'a was just used and b is within one 5% step of a');
+  pool.accounts[1].last_used_at = '2026-06-01T11:30:00Z';
+  assert.equal(choose(pool).account, 'a', 'back to the least recently used of the near-equal pair');
+  pool.quota.a = quota(0.5);
+  pool.quota.b = quota(0.5);
+  assert.equal(choose(pool).account, 'c', 'a clearly fuller account still wins');
+});
+
 test('auto selection skips disabled, auth-failed, cooling and exhausted-snapshot accounts', () => {
   const pool = poolOf('a', 'b', 'c', 'd');
   pool.accounts[0].disabled = true;
@@ -99,6 +146,27 @@ test('auto selection skips disabled, auth-failed, cooling and exhausted-snapshot
   assert.equal(choose(pool).account, 'c');
   pool.cooldowns[`c|other-family`] = { retry_at: '2026-06-01T14:00:00Z' }; // other family does not matter
   assert.equal(choose(pool).account, 'c');
+});
+
+test('a pool that is cooling only because of 503s reports upstream_unavailable', () => {
+  const pool = poolOf('a', 'b');
+  pool.cooldowns[`a|${FAMILY}`] = { retry_at: '2026-06-01T12:03:00Z', reason: 'upstream_unavailable' };
+  pool.cooldowns[`b|${FAMILY}`] = { retry_at: '2026-06-01T12:02:00Z', reason: 'upstream_unavailable' };
+  const none = choose(pool);
+  assert.equal(none.error.reason, 'upstream_unavailable');
+  assert.equal(none.error.retry_at, '2026-06-01T12:02:00Z');
+  assert.match(none.error.message, /unavailable upstream \(503/);
+  assert.doesNotMatch(none.error.message, /out of .* quota/);
+  const explicit = choose(pool, { requested: 'a' });
+  assert.equal(explicit.error.reason, 'upstream_unavailable');
+  assert.match(explicit.error.message, /unavailable upstream \(503\) for gemini-3\.8-flash; retry after 2026-06-01T12:03:00Z/);
+
+  pool.cooldowns[`b|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z', reason: 'quota_exhausted' };
+  assert.equal(choose(pool).error.reason, 'quota_exhausted', 'any quota cooldown makes it a quota error');
+
+  const bound = choose(pool, { conversation: 'c1', conversationAccount: 'a' });
+  assert.equal(bound.needsLoan, true);
+  assert.equal(bound.reason, 'upstream_unavailable');
 });
 
 test('explicit selection refuses unknown, disabled, login-needed and cooling accounts', () => {

@@ -248,6 +248,112 @@ test('a foreground run that exhausts its only account exits 5 with the conversat
   assert.match(without.stderr, /quota_exhausted/);
 });
 
+const UNAVAILABLE = 'FAKE_AGY_UNAVAILABLE_EMAILS';
+
+test('a 503 with no conversation parks the account briefly and fails over with the same prompt', () => {
+  const sb = sandbox('pool-503-failover');
+  twoAccounts(sb);
+  const r = run(sb, ['ask', '--prompt', 'hi'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x', FAKE_AGY_QUOTA_AFTER_CONVERSATION: '0' }));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /fake answer/);
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x']);
+  const cooldown = readPool(sb).cooldowns[`a|${FAMILY}`];
+  assert.equal(cooldown.reason, 'upstream_unavailable');
+  assert.equal(Date.parse(cooldown.retry_at) - Date.parse(cooldown.recorded_at), 3 * 60_000);
+  assert.match(cooldown.message, /No capacity available/);
+  assert.equal(promptOf(agyCalls(sb)[0]), promptOf(agyCalls(sb)[1]));
+});
+
+test('the next separate run does not reuse the account that just returned a 503', () => {
+  const sb = sandbox('pool-503-next-run');
+  twoAccounts(sb);
+  const env = withEnvFile(sb, { [UNAVAILABLE]: 'a@x', FAKE_AGY_QUOTA_AFTER_CONVERSATION: '0' });
+  assert.equal(run(sb, ['ask', '--prompt', 'one'], env).code, 0);
+  assert.equal(run(sb, ['ask', '--prompt', 'two'], env).code, 0);
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x', 'b@x'],
+    'the second run never touches the cooling account');
+});
+
+test('a 503 on a new task that changed nothing reruns the original prompt as a new conversation, not a continuation', () => {
+  const sb = sandbox('pool-503-rewrite');
+  twoAccounts(sb);
+  const r = run(sb, ['ask', '--prompt', 'the real task'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x' }));
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x']);
+  const [first, second] = agyCalls(sb);
+  assert.equal(first.includes('--conversation'), false);
+  assert.equal(second.includes('--conversation'), false, 'a new conversation, so nothing is continued');
+  assert.equal(promptOf(second), promptOf(first));
+  assert.doesNotMatch(promptOf(second), /previous turn stopped/);
+});
+
+test('a 503 after agy changed the workspace continues the conversation on a borrowed credential', async () => {
+  const sb = sandbox('pool-503-continue');
+  twoAccounts(sb);
+  const r = run(sb, ['staffer', '--prompt', 'edit things'],
+    withEnvFile(sb, { [UNAVAILABLE]: 'a@x', FAKE_AGY_UNAVAILABLE_WRITE: 'partial.txt' }));
+  const id = jobIdOf(r.stdout);
+  assert.equal(await waitForJob(sb, id), 'done');
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x'], 'b lends its credential to a\'s conversation');
+  const [first, second] = agyCalls(sb);
+  assert.equal(first.includes('--conversation'), false);
+  assert.equal(second[second.indexOf('--conversation') + 1], 'conv-1');
+  assert.match(promptOf(second), /previous turn stopped/);
+  assert.deepEqual(readPool(sb).leases, []);
+  assert.deepEqual(readPool(sb).loans, []);
+});
+
+test('a continuation that hits a 503 is never rewritten as a new task', () => {
+  const sb = sandbox('pool-503-pinned');
+  twoAccounts(sb);
+  assert.equal(run(sb, ['ask', '--account', 'a', '--prompt', 'first'], withEnvFile(sb)).code, 0);
+  const r = run(sb, ['ask', '--continue', '--prompt', 'next step'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x' }));
+  assert.equal(r.code, 0, r.stderr);
+  const calls = agyCalls(sb);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2][calls[2].indexOf('--conversation') + 1], 'conv-1');
+  assert.equal(envCalls(envFile(sb)).at(-1).account_email, 'b@x', 'b only lends its credential to the pinned conversation');
+});
+
+test('503 on every account is upstream_unavailable, not a quota error', () => {
+  const sb = sandbox('pool-503-all');
+  twoAccounts(sb);
+  const r = run(sb, ['ask', '--prompt', 'hi'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x,b@x', FAKE_AGY_QUOTA_AFTER_CONVERSATION: '0' }));
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /upstream_unavailable/);
+  assert.doesNotMatch(r.stderr, /out of .* quota/);
+  assert.equal(envCalls(envFile(sb)).length, 2, 'each account is tried once');
+  const pool = readPool(sb);
+  assert.equal(pool.cooldowns[`a|${FAMILY}`].reason, 'upstream_unavailable');
+  assert.equal(pool.cooldowns[`b|${FAMILY}`].reason, 'upstream_unavailable');
+});
+
+test('a background job that gets a 503 everywhere stops in attention and says to rewrite, not continue', async () => {
+  const sb = sandbox('pool-503-bg');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const r = run(sb, ['staffer', '--prompt', 'long task'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x' }));
+  const id = jobIdOf(r.stdout);
+  assert.equal(await waitForJob(sb, id), 'attention');
+  const job = status(sb, id);
+  assert.equal(job.reason, 'upstream_unavailable');
+  assert.ok(job.retry_at);
+  const result = jobResultFile(sb, id);
+  assert.match(result, /Job needs attention/);
+  assert.match(result, /had no capacity \(503\)/);
+  assert.match(result, new RegExp(`restart ${id}`));
+  assert.match(result, /do not use continue/i);
+  assert.equal(run(sb, ['status', id]).code, 5);
+});
+
+test('a foreground 503 on an explicitly chosen account is reported, not moved to another account', () => {
+  const sb = sandbox('pool-503-explicit');
+  twoAccounts(sb);
+  const r = run(sb, ['ask', '--account', 'a', '--prompt', 'hi'], withEnvFile(sb, { [UNAVAILABLE]: 'a@x', FAKE_AGY_QUOTA_AFTER_CONVERSATION: '0' }));
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /"reason": "upstream_unavailable"/);
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x']);
+});
+
 test('an authentication failure parks the account and is not retried', () => {
   const sb = sandbox('pool-auth');
   twoAccounts(sb);

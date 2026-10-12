@@ -24,6 +24,14 @@ When agy reports an error but response text came back, the companion delivers th
 
 `reason=quota_exhausted` with a `retry_at` means the account (and any idle account that could lend a credential) hit its quota for that model family. Failover and credential loans have already been tried inside the run, so do not retry in a loop. Offer `continue --job <id>` after `retry_at`, or when `accounts list` shows an idle account; with no conversation, offer a new run with another `--account` or model family. `accounts quota --refresh` shows current numbers when the user wants them.
 
+## upstream_unavailable (503, no capacity)
+
+`reason=upstream_unavailable` means agy got `UNAVAILABLE (code 503): No capacity available for model ...` from the server, after its own internal retries (roughly two minutes each time). The companion has parked that account for the model family for a few minutes and tried other accounts where it could, so another account or a loan is not worth trying by hand; do not retry in a loop.
+
+- **agy had not done anything yet** (clean `git status`, no partial result): rewrite the task and run it again as a new run, with `restart <job id>` or a new dispatch with an updated prompt. **Do not use `continue`.** A continuation is bound to the original account and conversation, which holds nothing useful, and it only repeats the failing request.
+- **agy had already changed the workspace**: inspect `git status` and `git diff`, then `continue --job <id>` with a prompt that says what is done and what is left. Ask the user first, as with a timeout.
+- The outage may be model-wide. After `retry_at` try once more, or offer another model family; ask before a second retry.
+
 An authentication failure on a pool account marks it `needs login` and is never retried. The user must run `agy-crew accounts login <name>` in their own terminal (browser sign-in); do not run it yourself. Live authentication failures still mean running `agy` interactively once.
 
 ## Retry rules

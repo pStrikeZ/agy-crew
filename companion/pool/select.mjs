@@ -34,6 +34,11 @@ function usable(pool, a, family, now, hasToken) {
     !activeCooldown(pool, a.name, family, now) && !exhaustedSnapshot(pool, a.name, family, now);
 }
 
+// Remaining quota counts in 5% steps: accounts that are about equally full
+// rotate by least recent use instead of the fullest one winning every time.
+const QUOTA_STEPS = 20;
+const quotaBucket = (remaining) => (remaining === null ? -1 : Math.round(remaining * QUOTA_STEPS));
+
 // fewer leases, then more known quota (unknown after known > 0), then least recently used, then insertion order
 function rank(pool, family, withLeases) {
   return (a, b) => {
@@ -41,8 +46,8 @@ function rank(pool, family, withLeases) {
       const d = leasesOn(pool, a.name).length - leasesOn(pool, b.name).length;
       if (d) return d;
     }
-    const ra = knownRemaining(pool, a.name, family) ?? -1;
-    const rb = knownRemaining(pool, b.name, family) ?? -1;
+    const ra = quotaBucket(knownRemaining(pool, a.name, family));
+    const rb = quotaBucket(knownRemaining(pool, b.name, family));
     if (ra !== rb) return rb - ra;
     const ua = a.last_used_at || '', ub = b.last_used_at || '';
     if (ua !== ub) return ua < ub ? -1 : 1;
@@ -50,15 +55,22 @@ function rank(pool, family, withLeases) {
   };
 }
 
-function coolingError(pool, accounts, family, now, intro) {
+const unavailableCooldown = (c) => c?.reason === 'upstream_unavailable';
+
+function coolingError(pool, accounts, family, now) {
   const rows = accounts.map((a) => {
     const c = activeCooldown(pool, a.name, family, now);
     const s = exhaustedSnapshot(pool, a.name, family, now);
-    return { name: a.name, at: c?.retry_at || s?.reset_at || null };
+    return { name: a.name, at: c?.retry_at || s?.reset_at || null, capacity: unavailableCooldown(c) && !s };
   });
   const times = rows.map((r) => r.at).filter(Boolean).sort();
   const detail = rows.map((r) => `  ${r.name}: ${r.at ? `retry after ${r.at}` : 'unavailable'}`).join('\n');
-  return { error: { reason: 'quota_exhausted', retry_at: times[0] || null,
+  const capacity = rows.every((r) => r.capacity);
+  const reason = capacity ? 'upstream_unavailable' : 'quota_exhausted';
+  const intro = capacity
+    ? `every pool account recently got ${family} unavailable upstream (503, upstream_unavailable).`
+    : `every pool account is out of ${family} quota (quota_exhausted).`;
+  return { error: { reason, retry_at: times[0] || null,
     message: `${intro}\n${detail}\nUse \`--account live\` (your own agy login) or another model family.` } };
 }
 
@@ -76,7 +88,7 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (a.disabled) return { error: { message: `conversation ${conversation} belongs to account ${a.name}, which is disabled (accounts enable ${a.name})` } };
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `conversation ${conversation} belongs to account ${a.name}, which needs login (accounts login ${a.name})` } };
     const c = activeCooldown(pool, a.name, family, now);
-    if (c) return { account: a.name, needsLoan: true, retry_at: c.retry_at };
+    if (c) return { account: a.name, needsLoan: true, retry_at: c.retry_at, reason: c.reason || 'quota_exhausted' };
     return { account: a.name };
   }
   if (requested === 'live') return { account: 'live' };
@@ -87,8 +99,9 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `account ${a.name} needs login (accounts login ${a.name})` } };
     const c = activeCooldown(pool, a.name, family, now);
     if (c) {
-      return { error: { reason: 'quota_exhausted', retry_at: c.retry_at,
-        message: `account ${a.name} has no ${family} quota until ${c.retry_at}. Use \`--account auto\`, another account, or another model family.` } };
+      const why = unavailableCooldown(c) ? `was unavailable upstream (503) for ${family}; retry after` : `has no ${family} quota until`;
+      return { error: { reason: c.reason || 'quota_exhausted', retry_at: c.retry_at,
+        message: `account ${a.name} ${why} ${c.retry_at}. Use \`--account auto\`, another account, or another model family.` } };
     }
     return { account: a.name };
   }
@@ -97,7 +110,7 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
   const candidates = enabled.filter((a) => usable(pool, a, family, now, hasToken));
   if (!candidates.length) {
     const cooling = enabled.filter((a) => activeCooldown(pool, a.name, family, now) || exhaustedSnapshot(pool, a.name, family, now));
-    if (cooling.length) return coolingError(pool, cooling, family, now, `every pool account is out of ${family} quota (quota_exhausted).`);
+    if (cooling.length) return coolingError(pool, cooling, family, now);
     return { error: { message: 'no pool account is ready: each enabled account needs login (see `accounts list`)' } };
   }
   candidates.sort(rank(pool, family, true));

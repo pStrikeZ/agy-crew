@@ -35,6 +35,12 @@
  *                            answer ERROR / empty / RESOURCE_EXHAUSTED
  *                            (FAKE_AGY_QUOTA_AFTER_CONVERSATION=0 omits the
  *                            conversation id, to exercise failover)
+ *   FAKE_AGY_UNAVAILABLE_EMAILS  comma list: runs whose $HOME token email is
+ *                            listed answer ERROR / empty / UNAVAILABLE 503
+ *                            (no capacity); FAKE_AGY_QUOTA_AFTER_CONVERSATION=0
+ *                            omits the conversation id, and
+ *                            FAKE_AGY_UNAVAILABLE_WRITE=<name> first creates
+ *                            that file in the cwd, as if agy had edited
  *   FAKE_AGY_REFRESH_TOKEN   mark the $HOME token as rewritten by this run
  *   FAKE_AGY_NEW_ACCESS_TOKEN  store this access_token in the $HOME token
  */
@@ -164,9 +170,11 @@ if (process.env.FAKE_AGY_NO_JSON) {
 
 const quotaEmails = (process.env.FAKE_AGY_QUOTA_EMAILS || '').split(',').filter(Boolean);
 const quotaHit = quotaEmails.length > 0 && quotaEmails.includes(tokenEmail());
+const unavailableEmails = (process.env.FAKE_AGY_UNAVAILABLE_EMAILS || '').split(',').filter(Boolean);
+const unavailableHit = !quotaHit && unavailableEmails.length > 0 && unavailableEmails.includes(tokenEmail());
 const withConversation = process.env.FAKE_AGY_QUOTA_AFTER_CONVERSATION !== '0';
 // Token refresh simulation: a real agy rewrites its token file while it runs.
-if (!quotaHit && fs.existsSync(tokenFile) && (process.env.FAKE_AGY_REFRESH_TOKEN || process.env.FAKE_AGY_NEW_ACCESS_TOKEN)) {
+if (!quotaHit && !unavailableHit && fs.existsSync(tokenFile) && (process.env.FAKE_AGY_REFRESH_TOKEN || process.env.FAKE_AGY_NEW_ACCESS_TOKEN)) {
   const json = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
   if (process.env.FAKE_AGY_REFRESH_TOKEN) json.refreshed_by_run = true;
   if (process.env.FAKE_AGY_NEW_ACCESS_TOKEN) json.token.access_token = process.env.FAKE_AGY_NEW_ACCESS_TOKEN;
@@ -185,6 +193,13 @@ if (quotaHit) {
   payload.status = 'ERROR';
   payload.response = '';
   payload.error = 'RESOURCE_EXHAUSTED: Individual quota reached. Resets in 2h3m.';
+  if (!withConversation) delete payload.conversation_id;
+}
+if (unavailableHit) {
+  if (process.env.FAKE_AGY_UNAVAILABLE_WRITE) fs.writeFileSync(path.join(process.cwd(), process.env.FAKE_AGY_UNAVAILABLE_WRITE), 'partial edit\n');
+  payload.status = 'ERROR';
+  payload.response = '';
+  payload.error = 'Our servers are experiencing high traffic right now, please try again in a minute. (UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-low on the server)';
   if (!withConversation) delete payload.conversation_id;
 }
 

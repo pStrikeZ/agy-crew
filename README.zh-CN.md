@@ -205,7 +205,7 @@ agy-crew accounts list              # work1 显示为 ready
 
 之后每次运行都会自动选择账号（默认就是 `--account auto`）：优先选空闲账号，其次选已知剩余配额最多的。想要更多账号，换个名字再执行一次 `login` 即可。你自己的 agy 登录（**live**）永远不属于账号池：`auto` 不会用它，它也不会借出凭据。只有显式传入 `--account live`，或账号池里没有任何启用的账号时才会用到它，所以账号池为空时一切照旧。
 
-账号触及配额上限时，companion 会为该账号和模型家族记录冷却，直到 agy 报告的重置时间，没有报告则为 60 分钟。尚未开始会话的任务会转到另一个账号；已经在会话中的任务仍绑定原账号，因为会话历史保存在那里。如果该账号正在冷却，就由一个空闲账号在本次运行中出借凭据，结束后令牌文件会还原，崩溃后也会恢复。所有账号都无法继续时，任务以 `quota_exhausted` 结束并给出 `retry_at`，由你决定何时 `continue`。`agy-crew accounts quota --refresh` 会向 Google 的 Cloud Code 服务查询当前配额，这是唯一会联网的命令。
+账号触及配额上限时，companion 会为该账号和模型家族记录冷却，直到 agy 报告的重置时间，没有报告则为 60 分钟。尚未开始会话的任务会转到另一个账号；已经在会话中的任务仍绑定原账号，因为会话历史保存在那里。如果该账号正在冷却，就由一个空闲账号在本次运行中出借凭据，结束后令牌文件会还原，崩溃后也会恢复。所有账号都无法继续时，任务以 `quota_exhausted` 结束并给出 `retry_at`，由你决定何时 `continue`。上游 503（`No capacity available for model ...`）会让该账号冷却 3 分钟，下一次运行改用其他账号；没有改动过工作区的任务会用原始提示词开新会话重跑，而不是继续旧会话。如果任务仍以 `upstream_unavailable` 结束且 agy 还什么都没做，请重新开始任务，不要用 `continue`。`agy-crew accounts quota --refresh` 会向 Google 的 Cloud Code 服务查询当前配额，这是唯一会联网的命令。
 
 已经有账号了？`agy-crew accounts import work2 --home <dir>` 会从现有的 HOME 形态目录复制令牌，例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。agy-crew 并不依赖 agy-cli-manager，导入只是复制文件，再做与登录相同的邮箱和重复检查。其他子命令：`enable`、`disable`、`cooldown clear`、`remove --yes`。完整说明见[参考手册](docs/REFERENCE.zh-CN.md#账号池)。
 

@@ -111,7 +111,7 @@ import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
 import { cmdAccounts, poolSettingsFiles } from './accounts.mjs';
 import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
-import { classifyFailureText, modelFamily } from './pool/results.mjs';
+import { classifyFailureText, isCooldownReason, modelFamily } from './pool/results.mjs';
 import { loadPool, updatePool, poolExists } from './pool/state.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -1165,6 +1165,9 @@ function treeDeltaReport(mode, before, after) {
 // ---------------------------------------------------------------------------
 
 const MAX_POOL_RETRIES = 3;
+// agy already retries a 503 about eight times (a couple of minutes) before it
+// gives up, so each extra attempt on another account is expensive.
+const MAX_UNAVAILABLE_RETRIES = 2;
 const QUOTA_CONTINUE_PROMPT = 'Your previous turn stopped because the account hit a quota limit. ' +
   'Continue the same task from where you stopped; do not repeat finished steps.';
 
@@ -1207,15 +1210,20 @@ async function invokeOnce(invoke, execution) {
   return { result, failure: resultFailure(result) };
 }
 
-function quotaFailure(resolved, opts, { message, retry_at, conversation }) {
-  const when = retry_at || 'the account quota resets';
-  const recovery = conversation
-    ? `continue ${opts.jobId ? `--job ${opts.jobId}` : `--conversation ${conversation}`} after ${when}; ` +
-      'when another pool account is idle, a credential loan is used automatically'
-    : `start a new run after ${when}, pass --account live, or choose another model family`;
+function quotaFailure(resolved, opts, { message, retry_at, conversation, reason = 'quota_exhausted' }) {
+  const unavailable = reason === 'upstream_unavailable';
+  const when = retry_at || (unavailable ? 'the upstream recovers' : 'the account quota resets');
+  const target = opts.jobId ? `--job ${opts.jobId}` : `--conversation ${conversation}`;
+  const recovery = unavailable
+    ? 'the upstream model had no capacity (503). If agy had not done anything yet, start the task again as a new run with a rewritten prompt' +
+      `${opts.jobId ? ` (restart ${opts.jobId})` : ''} and do not use continue. ` +
+      (conversation ? `Only if agy already changed the workspace, inspect it and continue ${target} after ${when}.` : `Start a new run after ${when}, or choose another model family.`)
+    : conversation
+      ? `continue ${target} after ${when}; when another pool account is idle, a credential loan is used automatically`
+      : `start a new run after ${when}, pass --account live, or choose another model family`;
   const text = `${message}\n${recovery}`;
-  if (resolved.background) throw Object.assign(new Error(text), { reason: 'quota_exhausted', retry_at: retry_at || null, recovery });
-  die(`${text}\n${JSON.stringify({ status: conversation ? 'attention' : 'error', reason: 'quota_exhausted',
+  if (resolved.background) throw Object.assign(new Error(text), { reason, retry_at: retry_at || null, recovery });
+  die(`${text}\n${JSON.stringify({ status: conversation ? 'attention' : 'error', reason,
     retry_at: retry_at || null, conversation_id: conversation || null, recovery }, null, 2)}`, conversation ? 5 : 1);
 }
 
@@ -1223,15 +1231,20 @@ function latestConversation(jobId) {
   return jobId ? loadState().jobs?.find((j) => j.id === jobId)?.conversation_id || null : null;
 }
 
-/** Run agy on a pool account chosen under a lease. A quota failure records a
- *  cooldown and then either fails over to another account (nothing started
- *  yet) or continues the bound conversation on a borrowed credential. */
-async function runWithPool(resolved, invoke, opts, execution) {
+/** Run agy on a pool account chosen under a lease. A quota or upstream-503
+ *  failure records a cooldown and then either fails over to another account
+ *  (nothing started yet) or continues the bound conversation on a borrowed
+ *  credential. A 503 on a task that began as a new conversation and left the
+ *  workspace untouched is not continued: the original prompt runs again in a
+ *  fresh conversation on another account. `untouched` tells whether agy has
+ *  changed nothing so far. */
+async function runWithPool(resolved, invoke, opts, execution, untouched = () => false) {
   const family = modelFamily(resolved.model);
+  const original = { prompt: invoke.prompt, conversation: invoke.conversation };
   for (let retries = 0; ; retries++) {
     const got = acquireRun({ requested: resolved.account_request, family, conversation: invoke.conversation, jobId: opts.jobId });
     if (got.error) {
-      if (got.error.reason !== 'quota_exhausted') die(got.error.message);
+      if (!isCooldownReason(got.error.reason)) die(got.error.message);
       quotaFailure(resolved, opts, { ...got.error, conversation: invoke.conversation });
     }
     const held = got.held;
@@ -1258,18 +1271,27 @@ async function runWithPool(resolved, invoke, opts, execution) {
       if (error) rethrow(error);
       return { result, held }; // triage reports it with its usual message
     }
-    const cooldown = recordCooldown(credit, family, failure.text, opts.jobId);
+    const unavailable = failure.kind === 'upstream_unavailable';
+    const cooldown = recordCooldown(credit, family, failure.text, opts.jobId, failure.kind);
     const conversation = result?.payload?.conversation_id || latestConversation(opts.jobId) || invoke.conversation;
-    if (retries < MAX_POOL_RETRIES) {
+    if (retries < (unavailable ? MAX_UNAVAILABLE_RETRIES : MAX_POOL_RETRIES)) {
       if (!conversation && held.auto) continue; // nothing started: just pick another account
+      if (unavailable && held.auto && !original.conversation && untouched()) {
+        // agy did nothing: rewrite the task from its original prompt instead of continuing it
+        invoke.prompt = original.prompt;
+        invoke.conversation = null;
+        continue;
+      }
       if (conversation && boundAccount(loadPool(), conversation) !== 'live') {
         invoke.conversation = conversation; // the next acquire finds the account cooling and borrows a credential
         invoke.prompt = QUOTA_CONTINUE_PROMPT;
         continue;
       }
     }
-    quotaFailure(resolved, opts, { conversation, retry_at: cooldown.retry_at,
-      message: `agy account "${credit}" hit a ${family} quota limit (quota_exhausted).` });
+    quotaFailure(resolved, opts, { conversation, retry_at: cooldown.retry_at, reason: failure.kind,
+      message: unavailable
+        ? `agy account "${credit}" got ${family} unavailable upstream (503, upstream_unavailable).`
+        : `agy account "${credit}" hit a ${family} quota limit (quota_exhausted).` });
   }
 }
 
@@ -1289,7 +1311,12 @@ async function executeRun(resolved, prompt, opts, execution = null) {
   };
   let result, response, held;
   try {
-    ({ result, held } = await runWithPool(resolved, invoke, opts, execution));
+    const untouched = () => {
+      if (resolved.mode === 'ask') return true;
+      const after = porcelainSnapshot();
+      return !!workspaceBefore && !!after && porcelainDelta(workspaceBefore, after).length === 0;
+    };
+    ({ result, held } = await runWithPool(resolved, invoke, opts, execution, untouched));
     response = triageResult(result, resolved.mode, resolved.profile, resolved.profileSource, resolved.model);
   } catch (error) {
     error.workspace = {
@@ -1348,7 +1375,7 @@ function cmdRun(mode, opts) {
  *  another account. Quota problems are left to the run itself. */
 function preflightAccount(resolved) {
   const problem = preflight({ requested: resolved.account_request, family: modelFamily(resolved.model), conversation: resolved.conversation });
-  if (problem && problem.reason !== 'quota_exhausted') die(problem.message);
+  if (problem && !isCooldownReason(problem.reason)) die(problem.message);
 }
 
 async function dispatch(resolved, prompt, opts) {
@@ -1471,7 +1498,7 @@ async function workerMain(jobId) {
     if (!job) throw error;
     const reason = job.cancel_requested_at ? 'canceled' : error.reason || 'agy_error';
     const status = job.status === 'canceled' || reason === 'canceled' ? 'canceled'
-      : (isTimeoutReason(reason) || reason === 'quota_exhausted') && job.conversation_id ? 'attention' : 'error';
+      : (isTimeoutReason(reason) || isCooldownReason(reason)) && job.conversation_id ? 'attention' : 'error';
     job = finishJob(jobId, (completed) => {
       const report = { ...diagnosticPacket(completed), result_exists: true, reason: completed.reason,
         workspace: error.workspace, last_snapshot: readObservation(completed) };
@@ -1650,6 +1677,17 @@ function quotaRecovery(job) {
       : `No conversation was started. Restart after ${when}, pass --account live, or choose another model family.` };
 }
 
+/** Recovery for a job that stopped because the upstream model had no capacity (503). */
+function unavailableRecovery(job) {
+  return { retry_at: job.retry_at || null, spec_file: job.spec_file || null,
+    inspect: 'git status --short; git diff',
+    restart: `restart ${job.id}`,
+    continue: job.conversation_id ? `continue --job ${job.id} --prompt "Continue after inspecting partial workspace changes"` : null,
+    note: 'The upstream model had no capacity (503). If agy had not done anything yet (clean `git status`, no partial result), start the task again ' +
+      `(restart ${job.id}, or a new run with a rewritten prompt) and do not use continue: a continuation stays bound to the same account and conversation. ` +
+      'Use continue only when agy already changed the workspace, after inspecting it. Never retry in a loop.' };
+}
+
 function diagnosticPacket(job) {
   let logBytes = null;
   try { logBytes = fs.statSync(job.log_file).size; } catch {}
@@ -1660,8 +1698,8 @@ function diagnosticPacket(job) {
     result_exists: fs.existsSync(job.result_file), log_file: job.log_file, events_file: job.events_file || null,
     conversation_id: job.conversation_id || null, model: job.model || null, profile: job.profile || null,
     ...(job.account ? { account: job.account } : {}),
-    ...(job.reason === 'quota_exhausted' ? { retry_at: job.retry_at || null } : {}),
-    recovery: isTimeoutReason(job.reason) ? timeoutRecovery(job) : job.reason === 'quota_exhausted' ? quotaRecovery(job) : { inspect: 'git status --short; git diff', spec_file: job.spec_file || null,
+    ...(isCooldownReason(job.reason) ? { retry_at: job.retry_at || null } : {}),
+    recovery: isTimeoutReason(job.reason) ? timeoutRecovery(job) : job.reason === 'quota_exhausted' ? quotaRecovery(job) : job.reason === 'upstream_unavailable' ? unavailableRecovery(job) : { inspect: 'git status --short; git diff', spec_file: job.spec_file || null,
       continue: job.conversation_id ? `continue --job ${job.id} --prompt "Continue after inspecting partial workspace changes"` : null,
       restart: `restart ${job.id}`, note: 'Inspect partial workspace changes first. Recovery creates a linked new job with a fresh budget; nothing is retried automatically.' },
   };
