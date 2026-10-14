@@ -41,9 +41,10 @@ export function acquireRun(req) {
     if (pick.needsLoan) {
       const lender = chooseLender(pool, { family: req.family, exclude: [pick.account] });
       if (!lender) {
-        const why = pick.reason === 'upstream_unavailable' ? 'is unavailable upstream (503)' : 'has no quota';
+        const why = pick.reason === 'held' ? 'is held by another process'
+          : `${pick.reason === 'upstream_unavailable' ? 'is unavailable upstream (503)' : 'has no quota'} for ${req.family} until ${pick.retry_at}`;
         return { error: { reason: pick.reason, retry_at: pick.retry_at,
-          message: `account ${pick.account} ${why} for ${req.family} until ${pick.retry_at} and no other pool account is idle to lend a credential.` } };
+          message: `account ${pick.account} ${why} and no other pool account is idle to lend a credential.` } };
       }
       const loan = beginLoan(pool, { borrower: pick.account, lender, jobId: req.jobId });
       return { held: { account: pick.account, lender, loanId: loan.id, pooled: true } };

@@ -34,7 +34,7 @@
  *                                   or coexist with upstream agy-staff
  *   uninstall [--hosts a,b | --all] [--json]
  *                                   remove only the links install created
- *   accounts <list|login|import|remove|enable|disable|cooldown clear|quota>
+ *   accounts <list|login|import|remove|enable|disable|cooldown|hold|quota>
  *                                   manage the pool of private agy logins
  *   _worker <job-id>                (internal) background job executor
  *
@@ -443,7 +443,7 @@ function pidAlive(pid) {
   }
 }
 
-const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts', 'account', 'family', 'home']);
+const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts', 'account', 'family', 'home', 'pid', 'retry-at']);
 const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh']);
 
 // Flags dropped in 0.2. They get their own error instead of falling through to
@@ -2126,8 +2126,10 @@ function main() {
         '--prompt <text> --prompt-file <path> --stdin --conversation <id> --continue --json (review) ' +
         '--account <auto|live|name> (run commands, continue, restart) ' +
         '--apply --restrict <modes|none> (setup) --hosts <a,b> --all --dry-run --status (install/uninstall)\n' +
-        'accounts <list|login|import|remove|enable|disable|cooldown clear|quota> manages the pool of private agy logins ' +
-        '(login <name>; import <name> --home <dir>; remove <name> --yes; cooldown clear <name> --family <f>; quota [<name>...] --refresh --json; list --json).\n' +
+        'accounts <list|login|import|remove|enable|disable|cooldown|hold|quota> manages the pool of private agy logins ' +
+        '(login <name>; import <name> --home <dir>; remove <name> --yes; cooldown clear <name> --family <f>; ' +
+        'cooldown record <name> --family <f> --retry-at <time>; hold acquire <name> --pid <pid> --family <f> --json; hold release <id>; ' +
+        'quota [<name>...] --refresh --json; list --json).\n' +
         'task text for staffer/research/review/implement/ask/continue comes from exactly one of ' +
         '--prompt <text>, --prompt-file <path>, or --stdin.\n' +
         'staffer/research/review/implement run unrestricted by default (no setup needed); --restricted is the ' +

@@ -15,6 +15,7 @@ import { accountEnv } from './pool/env.mjs';
 import { accountDir, accountHome, accountSettingsPath, loadPool, poolExists, poolPaths, tokenPath,
   updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
+import { activeCooldown, exhaustedSnapshot, holdOn } from './pool/select.mjs';
 import { readToken } from './pool/token.mjs';
 import { refreshQuotas } from './pool/quota.mjs';
 import { formatAgo, renderCooldowns, renderQuotaTable, renderTable } from './pool/format.mjs';
@@ -44,6 +45,7 @@ function accountState(pool, account, now) {
   if (account.auth_error_at || !fs.existsSync(tokenPath(accountHome(account.name)))) return 'needs login';
   const cooling = Object.entries(pool.cooldowns).filter(([key, c]) => key.startsWith(`${account.name}|`) && Date.parse(c.retry_at) > now);
   if (cooling.length) return cooling.map(([key, c]) => `cooling ${key.split('|')[1]} until ${c.retry_at}`).join('; ');
+  if (holdOn(pool, account.name)) return 'held';
   const n = pool.leases.filter((l) => l.account === account.name).length;
   return n ? `busy ${n}` : 'ready';
 }
@@ -249,8 +251,11 @@ function cmdToggle(opts, disabled) {
   out(`Account ${name} ${disabled ? 'disabled' : 'enabled'}.`);
 }
 
+const COOLDOWN_USAGE = 'usage: accounts cooldown clear <name> [--family <family>] | accounts cooldown record <name> --family <family> --retry-at <time>';
+
 function cmdCooldown(opts) {
-  if (opts._[1] !== 'clear') throw new PoolError('usage: accounts cooldown clear <name> [--family <family>]');
+  if (opts._[1] === 'record') return cmdCooldownRecord(opts);
+  if (opts._[1] !== 'clear') throw new PoolError(COOLDOWN_USAGE);
   const name = opts._[2];
   const cleared = updatePool((pool) => {
     requireAccount(pool, name);
@@ -259,6 +264,80 @@ function cmdCooldown(opts) {
     return keys.length;
   });
   out(`Cleared ${cleared} cooldown(s) for ${name}.`);
+}
+
+/** A quota cooldown learned outside agy-crew. It never shortens a cooldown already in force. */
+function cmdCooldownRecord(opts) {
+  const name = opts._[2];
+  const retryAt = Date.parse(opts['retry-at'] || '');
+  if (!opts.family || Number.isNaN(retryAt)) throw new PoolError(COOLDOWN_USAGE);
+  const cooldown = updatePool((pool) => {
+    requireAccount(pool, name);
+    const key = `${name}|${opts.family}`;
+    const current = pool.cooldowns[key];
+    if (retryAt <= Date.now() || (current && Date.parse(current.retry_at) >= retryAt)) return current || null;
+    pool.cooldowns[key] = { retry_at: new Date(retryAt).toISOString(), reason: 'quota_exhausted',
+      recorded_at: new Date().toISOString(), job_id: null, message: '' };
+    return pool.cooldowns[key];
+  });
+  if (opts.json) return printJson({ cooldown });
+  out(cooldown ? `Cooldown for ${name} ${opts.family} until ${cooldown.retry_at}.` : `No cooldown recorded for ${name} ${opts.family}: ${opts['retry-at']} has passed.`);
+}
+
+const HOLD_USAGE = 'usage: accounts hold acquire <name> --pid <pid> [--family <family>] [--json] | accounts hold release <id> [--json]';
+
+/** Why a process outside agy-crew may not hold this account now, or null.
+ *  The holder runs its own copy of the credential, so only what concerns the
+ *  account itself refuses: another process using it, or its quota. */
+function holdRefusal(pool, name, family, pid, now) {
+  if (!pool.accounts.some((a) => a.name === name)) return { reason: 'unknown', message: `unknown account "${name}" (see \`accounts list\`)` };
+  if (accountInLoan(pool, name) || pool.leases.some((l) => l.account === name && !(l.role === 'hold' && l.pid === pid))) {
+    return { reason: 'busy', message: `account ${name} is in use; try again when it is idle` };
+  }
+  if (!family) return null;
+  const cooling = activeCooldown(pool, name, family, now);
+  const exhausted = exhaustedSnapshot(pool, name, family, now);
+  if (!cooling && !exhausted) return null;
+  const retryAt = cooling?.retry_at || exhausted.reset_at;
+  return { reason: cooling?.reason || 'quota_exhausted', retry_at: retryAt, message: `account ${name} has no ${family} quota until ${retryAt}` };
+}
+
+/** Let another process that runs agy with this account's credential keep
+ *  agy-crew off it: a held account is never picked, never lends, and refuses
+ *  an explicit --account. The hold ends with `release`, or when its process exits. */
+function cmdHold(opts) {
+  const action = opts._[1];
+  if (action === 'acquire') {
+    const name = opts._[2];
+    const pid = Number(opts.pid);
+    if (!Number.isInteger(pid) || pid <= 1) throw new PoolError(HOLD_USAGE);
+    if (!name) throw new PoolError(HOLD_USAGE);
+    const outcome = updatePool((pool) => {
+      const refused = holdRefusal(pool, name, opts.family, pid, Date.now());
+      if (refused) return { refused };
+      const current = holdOn(pool, name);
+      if (current) return { hold: current };
+      const hold = { id: randomUUID().slice(0, 8), account: name, role: 'hold', pid, job_id: null, started_at: new Date().toISOString() };
+      pool.leases.push(hold);
+      return { hold };
+    });
+    if (outcome.refused) {
+      if (opts.json) printJson(outcome);
+      throw new PoolError(outcome.refused.message);
+    }
+    return opts.json ? printJson(outcome) : out(`Holding account ${name} (hold ${outcome.hold.id}).`);
+  }
+  if (action === 'release') {
+    const id = opts._[2];
+    if (!id) throw new PoolError(HOLD_USAGE);
+    const released = updatePool((pool) => {
+      const before = pool.leases.length;
+      pool.leases = pool.leases.filter((l) => !(l.id === id && l.role === 'hold'));
+      return pool.leases.length < before;
+    });
+    return opts.json ? printJson({ released }) : out(released ? `Released hold ${id}.` : `No hold ${id}.`);
+  }
+  throw new PoolError(HOLD_USAGE);
 }
 
 async function cmdQuota(opts, deps) {
@@ -296,11 +375,14 @@ export async function cmdAccounts(opts, deps) {
     case 'enable': return cmdToggle(opts, false);
     case 'disable': return cmdToggle(opts, true);
     case 'cooldown': return cmdCooldown(opts);
+    case 'hold': return cmdHold(opts);
     case 'quota': return cmdQuota(opts, deps);
     default:
-      throw new PoolError('usage: accounts <list|login|import|remove|enable|disable|cooldown clear|quota> ...\n' +
+      throw new PoolError('usage: accounts <list|login|import|remove|enable|disable|cooldown|hold|quota> ...\n' +
         '  accounts list [--json]\n  accounts login <name>\n  accounts import <name> --home <dir>\n' +
         '  accounts remove <name> [--yes]\n  accounts enable|disable <name>\n' +
-        '  accounts cooldown clear <name> [--family <f>]\n  accounts quota [<name>...] [--refresh] [--json]');
+        '  accounts cooldown clear <name> [--family <f>]\n  accounts cooldown record <name> --family <f> --retry-at <time>\n' +
+        '  accounts hold acquire <name> --pid <pid> [--family <f>] [--json]\n  accounts hold release <id> [--json]\n' +
+        '  accounts quota [<name>...] [--refresh] [--json]');
   }
 }

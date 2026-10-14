@@ -54,6 +54,7 @@ If the user already has accounts elsewhere, offer `accounts import` instead of a
 | --- | --- | --- |
 | `ready` | Idle and usable | None. |
 | `busy n` | `n` runs hold it | Normal. A new `auto` run prefers an idle account. |
+| `held` | Another process outside agy-crew is using its credential | Runs skip it; a conversation bound to it borrows another account's credential. Leave it alone; the hold ends when that process releases it or exits. |
 | `cooling` | A model family hit its quota; other families still work. The `COOLDOWNS` section lists each family with `until <time> (in <duration>)` | Wait until then, use another model family or account. Do not clear the cooldown on your own. |
 | `needs login` | agy rejected the credential | Tell the user to run `agy-crew accounts login <name>`. Never retry. |
 | `disabled` | Excluded from selection | `enable` only if the user asks. |

@@ -205,12 +205,14 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 
 | Command | Effect |
 |---|---|
-| `accounts list [--json]` | Aligned plain-text tables. First, name, email, state (`ready`, `busy n`, `cooling`, `needs login`, `disabled`) and last use as a relative time (`9m ago`, `never`), plus a `live` row (`your own agy login, never pooled`). Then a `QUOTA` table with, per account and quota pool (`gemini`, `other`, then any others), the remaining percent and reset time of the 5h and weekly windows (`99%  resets in 4h12m (15:23)`; `MM-DD HH:MM` when the reset is not today, `reset since refresh` when the cached reset time has passed) and the age of the snapshot (`AS OF`); accounts without a snapshot show `not refreshed`, failed refreshes `error: ...`. Finally a `COOLDOWNS` section listing each active cooldown's family and `until <time> (in <duration>)`, omitted when there are none. `--json` output is unchanged |
+| `accounts list [--json]` | Aligned plain-text tables. First, name, email, state (`ready`, `busy n`, `held`, `cooling`, `needs login`, `disabled`) and last use as a relative time (`9m ago`, `never`), plus a `live` row (`your own agy login, never pooled`). Then a `QUOTA` table with, per account and quota pool (`gemini`, `other`, then any others), the remaining percent and reset time of the 5h and weekly windows (`99%  resets in 4h12m (15:23)`; `MM-DD HH:MM` when the reset is not today, `reset since refresh` when the cached reset time has passed) and the age of the snapshot (`AS OF`); accounts without a snapshot show `not refreshed`, failed refreshes `error: ...`. Finally a `COOLDOWNS` section listing each active cooldown's family and `until <time> (in <duration>)`, omitted when there are none. `--json` output is unchanged |
 | `accounts login <name>` | Interactive sign-in for a new account, or a re-login of an existing one. See [Login](#login) |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). Same email and duplicate checks as login. Refuses the live home |
 | `accounts quota [<name>...] [--refresh] [--json]` | Print the `QUOTA` table and `COOLDOWNS` section described above for the named accounts (all by default), from cached snapshots. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
 | `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
 | `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
+| `accounts cooldown record <name> --family <f> --retry-at <time>` | Record a quota cooldown observed outside agy-crew, until the given ISO 8601 time. A time already past, or earlier than a cooldown in force, changes nothing. `--json` prints `{ "cooldown": ... }` with the cooldown now in force |
+| `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | Keep agy-crew off an account while another process uses its credential. See [External holds](#external-holds) |
 | `accounts remove <name> [--yes]` | Without `--yes`, print what would be deleted and exit 0. With `--yes`, delete the account directory, its cooldowns, quota snapshot and conversation bindings, and report how many conversations became unusable. Refused while the account is in a lease or loan |
 
 `--json` prints machine-readable output. These commands exit 0 on success and 1 on error. They never create per-repository state, so they work from any directory.
@@ -279,6 +281,14 @@ A conversation's history lives in its account's HOME, but the credential that ma
 
 **Crash recovery.** Every locked update first reaps dead processes: leases whose pid is gone are dropped, and a loan whose pid is gone is restored by the same steps (so the lender's token gets the refreshed content and the borrower's original token returns). `accounts remove` and `accounts login` refuse while the account is in a lease or loan.
 
+### External holds
+
+A process outside agy-crew that runs agy with a copy of a pool account's credential can hold the account for as long as it uses it. A held account is never picked by `auto` and never lends; an explicit `--account <name>` for it fails before launch; a conversation bound to it continues on a borrowed credential, as when its account is cooling. `list` shows the account as `held`, and `remove` and `login` refuse it.
+
+`accounts hold acquire <name> --pid <pid>` records the hold as a lease with `role: "hold"` owned by `<pid>`, in the same locked update as the checks below. The hold ends with `accounts hold release <id>`, or on the next locked update after `<pid>` exits. Acquiring again with the same pid returns the existing hold.
+
+The holder runs its own copy of the credential, so whether agy-crew's copy is disabled or needs login does not matter. The hold is refused when agy-crew has no such account (`unknown`), when the account has any other lease or loan, including a hold by another pid (`busy`), or, when `--family <f>` is given, when it has a cooldown or an empty quota snapshot for that family (the cooldown's reason, usually `quota_exhausted`, with `retry_at`). A refusal exits 1 with the message on stderr; with `--json` it also prints `{ "refused": { "reason", "message", "retry_at"? } }` on stdout. A granted hold prints `{ "hold": { "id", "account", "role", "pid", "started_at", ... } }`.
+
 ### Quota snapshots
 
 `accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, per account:
@@ -323,7 +333,7 @@ A refreshed snapshot with remaining quota above zero for a pool clears that acco
 | No `auto` candidate, or quota hit mid-run with no lender | `quota_exhausted`, with `retry_at` (per account when no candidate) | 5 when a conversation id exists, otherwise 1; a background job ends `attention` or `error` accordingly |
 | 503 / no capacity from the model, no account or lender could continue | `upstream_unavailable`, with `retry_at` (3 minutes after the last 503) | 5 when a conversation id exists, otherwise 1; a background job ends `attention` or `error` accordingly |
 | Authentication failure on a pool account | account marked `needs login`; never retried | follows the normal error path |
-| Explicit `--account <name>` that is unknown, disabled, cooling or needs login | error before launch naming the reason | 1 |
+| Explicit `--account <name>` that is unknown, disabled, held, cooling or needs login | error before launch naming the reason | 1 |
 | `--account` conflicting with a bound conversation | `conversation <id> belongs to account <x>` | 1 |
 | `accounts` subcommand failure | error on stderr | 1 |
 | `pool.json` corrupt or from a newer agy-crew | refuses to run | 1 |

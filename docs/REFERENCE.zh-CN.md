@@ -254,12 +254,14 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 | 命令 | 作用 |
 | --- | --- |
-| `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 输出不变 |
+| `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`held`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 输出不变 |
 | `accounts login <name>` | 交互式登录：添加新账号，或为已有账号重新登录。见[登录](#登录) |
 | `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
 | `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
 | `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
+| `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
+| `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
 | `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |
 
 `--json` 输出机器可读的结果。这些命令成功时退出码为 0，出错时为 1。它们不会创建仓库内状态，因此可以在任意目录运行。
@@ -328,6 +330,14 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 **崩溃恢复。** 每次加锁更新之前都会先清理失效进程：进程已退出的租约会被丢弃，进程已退出的借用按同样的步骤恢复（出借方拿回刷新后的令牌，借用方的原始令牌也回到原位）。账号处于租约或借用中时，`accounts remove` 和 `accounts login` 会拒绝执行。
 
+### 外部持有
+
+agy-crew 之外的进程如果用某个池账号凭据的副本运行 agy，可以在使用期间持有（hold）该账号。被持有的账号不会被 `auto` 选中，也不会出借凭据；显式 `--account <name>` 指定它时在启动前报错；绑定在它上面的会话与账号处于冷却时一样，借用其他账号的凭据继续。`list` 中它显示为 `held`，`remove` 和 `login` 会拒绝它。
+
+`accounts hold acquire <name> --pid <pid>` 在一次加锁更新中完成下面的检查，并把持有记录为一条 `role: "hold"`、属于 `<pid>` 的租约。持有在 `accounts hold release <id>` 时结束，或在 `<pid>` 退出后的下一次加锁更新中被清理。同一个 pid 再次申请时返回已有的持有。
+
+持有方使用的是自己那份凭据副本，所以 agy-crew 里这份是否停用、是否需要登录都不影响持有。以下情况会拒绝持有：agy-crew 中没有该账号（`unknown`）；账号有任何其他租约或借用，包括其他 pid 的持有（`busy`）；给出 `--family <f>` 时，该家族正在冷却或配额快照显示已耗尽（原因取冷却的原因，通常为 `quota_exhausted`，并带 `retry_at`）。被拒绝时以 1 退出，错误信息输出到标准错误；带 `--json` 时还会在标准输出打印 `{ "refused": { "reason", "message", "retry_at"? } }`。持有成功时输出 `{ "hold": { "id", "account", "role", "pid", "started_at", ... } }`。
+
 ### 配额快照
 
 不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会针对每个账号向 Google 的 Cloud Code 服务查询：
@@ -372,7 +382,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `auto` 没有候选账号，或运行中遇到配额错误且没有可借用的出借方 | `quota_exhausted`，附 `retry_at`（没有候选时按账号分别列出） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
 | 模型返回 503 / 没有容量，且没有账号或出借方可以继续 | `upstream_unavailable`，附 `retry_at`（最后一次 503 之后 3 分钟） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
 | 池账号认证失败 | 账号标记为 `needs login`，不重试 | 按普通错误处理 |
-| 显式指定的 `--account <name>` 不存在、已停用、处于冷却或需要登录 | 启动前报错并说明原因 | 1 |
+| 显式指定的 `--account <name>` 不存在、已停用、被持有、处于冷却或需要登录 | 启动前报错并说明原因 | 1 |
 | `--account` 与已绑定的会话冲突 | `conversation <id> belongs to account <x>` | 1 |
 | `accounts` 子命令失败 | 错误信息输出到标准错误 | 1 |
 | `pool.json` 损坏，或由更新版本的 agy-crew 写入 | 拒绝运行 | 1 |

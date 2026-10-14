@@ -214,6 +214,20 @@ test('chooseLender needs an idle, usable account outside any loan', () => {
   assert.equal(lender(), null);
 });
 
+test('a held account is never picked or lent, refuses --account, and lends its conversation a credential', () => {
+  const pool = poolOf('a', 'b');
+  pool.leases.push({ id: 'h', account: 'a', pid: 1, role: 'hold' });
+  assert.equal(choose(pool).account, 'b');
+  const explicit = choose(pool, { requested: 'a' });
+  assert.equal(explicit.error.reason, 'held');
+  assert.match(explicit.error.message, /held by another process/);
+  const bound = choose(pool, { conversation: 'c1', conversationAccount: 'a' });
+  assert.deepEqual([bound.account, bound.needsLoan, bound.reason], ['a', true, 'held']);
+  assert.equal(chooseLender(pool, { family: FAMILY, exclude: ['b'], now: NOW, hasToken }), null);
+  pool.leases.push({ id: 'h2', account: 'b', pid: 1, role: 'hold' });
+  assert.match(choose(pool).error.message, /no pool account is ready/);
+});
+
 test('parseQuotaSummary maps groups to pools and windows', () => {
   const pools = parseQuotaSummary({ groups: [
     { displayName: 'Gemini', buckets: [

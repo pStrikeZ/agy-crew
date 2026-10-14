@@ -187,6 +187,25 @@ test('continuing a bound conversation whose account is cooling starts with a loa
   assert.equal(emailOfToken(tokenFileOf(sb, 'a')), 'a@x');
 });
 
+test('continuing a bound conversation whose account is held runs on a borrowed credential', () => {
+  const sb = sandbox('pool-loan-held');
+  twoAccounts(sb, (p) => {
+    p.conversations['conv-1'] = { account: 'a', recorded_at: '' };
+    p.leases.push({ id: 'h', account: 'a', pid: process.pid, role: 'hold' });
+  });
+  assert.equal(run(sb, ['ask', '--account', 'live', '--prompt', 'seed']).code, 0);
+  const state = path.join(sb.repo, '.agy-crew', 'state.json');
+  const parsed = JSON.parse(fs.readFileSync(state, 'utf8'));
+  parsed.conversation_configs['conv-1'].account = 'a';
+  fs.writeFileSync(state, JSON.stringify(parsed));
+  const r = run(sb, ['continue', '--conversation', 'conv-1', '--prompt', 'go on'], withEnvFile(sb));
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['b@x']);
+  assert.equal(envCalls(envFile(sb))[0].HOME, accountHomeOf(sb, 'a'));
+  assert.equal(emailOfToken(tokenFileOf(sb, 'a')), 'a@x');
+  assert.deepEqual(readPool(sb).leases.map((l) => l.role), ['hold'], 'the hold outlives the run');
+});
+
 test('every account cooling is a quota_exhausted error naming the earliest retry', () => {
   const sb = sandbox('pool-all-cooling');
   const soon = new Date(Date.now() + 1800_000).toISOString();

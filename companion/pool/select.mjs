@@ -4,6 +4,8 @@ import { quotaPool } from './results.mjs';
 
 export const findAccount = (pool, name) => pool.accounts.find((a) => a.name === name) || null;
 export const leasesOn = (pool, name) => pool.leases.filter((l) => l.account === name);
+/** A hold means a process outside agy-crew is using the account's credential. */
+export const holdOn = (pool, name) => pool.leases.find((l) => l.account === name && l.role === 'hold') || null;
 const defaultHasToken = (name) => fs.existsSync(tokenPath(accountHome(name)));
 
 export function activeCooldown(pool, name, family, now) {
@@ -30,7 +32,7 @@ function knownRemaining(pool, name, family) {
 }
 
 function usable(pool, a, family, now, hasToken) {
-  return !a.disabled && !a.auth_error_at && hasToken(a.name) &&
+  return !a.disabled && !a.auth_error_at && hasToken(a.name) && !holdOn(pool, a.name) &&
     !activeCooldown(pool, a.name, family, now) && !exhaustedSnapshot(pool, a.name, family, now);
 }
 
@@ -89,6 +91,7 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `conversation ${conversation} belongs to account ${a.name}, which needs login (accounts login ${a.name})` } };
     const c = activeCooldown(pool, a.name, family, now);
     if (c) return { account: a.name, needsLoan: true, retry_at: c.retry_at, reason: c.reason || 'quota_exhausted' };
+    if (holdOn(pool, a.name)) return { account: a.name, needsLoan: true, retry_at: null, reason: 'held' };
     return { account: a.name };
   }
   if (requested === 'live') return { account: 'live' };
@@ -97,6 +100,7 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (!a) return { error: { message: `unknown account "${requested}" (see \`accounts list\`)` } };
     if (a.disabled) return { error: { message: `account ${a.name} is disabled (accounts enable ${a.name})` } };
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `account ${a.name} needs login (accounts login ${a.name})` } };
+    if (holdOn(pool, a.name)) return { error: { reason: 'held', message: `account ${a.name} is held by another process. Use \`--account auto\` or another account.` } };
     const c = activeCooldown(pool, a.name, family, now);
     if (c) {
       const why = unavailableCooldown(c) ? `was unavailable upstream (503) for ${family}; retry after` : `has no ${family} quota until`;

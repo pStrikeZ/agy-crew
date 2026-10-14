@@ -161,6 +161,83 @@ test('cooldown clear removes one family or all of an account', () => {
   assert.deepEqual(readPool(sb).cooldowns, {});
 });
 
+test('hold acquire keeps agy-crew off an account until release', () => {
+  const sb = sandbox('pool-hold');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
+  const acquire = (...extra) => run(sb, ['accounts', 'hold', 'acquire', 'a', '--pid', String(process.pid), '--family', FAMILY, '--json', ...extra]);
+  const held = acquire();
+  assert.equal(held.code, 0, held.stderr);
+  const { hold } = JSON.parse(held.stdout);
+  assert.deepEqual([hold.account, hold.role, hold.pid], ['a', 'hold', process.pid]);
+  assert.equal(JSON.parse(acquire().stdout).hold.id, hold.id, 'the same process gets its hold back');
+  assert.equal(list(sb).accounts[0].state, 'held');
+
+  const other = run(sb, ['accounts', 'hold', 'acquire', 'a', '--pid', '2', '--json']);
+  assert.equal(other.code, 1);
+  assert.equal(JSON.parse(other.stdout).refused.reason, 'busy');
+  const removed = run(sb, ['accounts', 'remove', 'a', '--yes']);
+  assert.equal(removed.code, 1);
+  assert.match(removed.stderr, /in use/);
+  const ask = run(sb, ['ask', '--account', 'a', '--prompt', 'hi']);
+  assert.equal(ask.code, 1);
+  assert.match(ask.stderr, /held by another process/);
+
+  const released = run(sb, ['accounts', 'hold', 'release', hold.id, '--json']);
+  assert.deepEqual(JSON.parse(released.stdout), { released: true });
+  assert.deepEqual(JSON.parse(run(sb, ['accounts', 'hold', 'release', hold.id, '--json']).stdout), { released: false });
+  assert.equal(list(sb).accounts[0].state, 'ready');
+});
+
+test('hold acquire refuses unknown, busy and cooling accounts, but not disabled or signed-out ones', () => {
+  const sb = sandbox('pool-hold-refused');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [
+    { name: 'busy', email: 'busy@example.com' },
+    { name: 'cool', email: 'cool@example.com' },
+    { name: 'off', email: 'off@example.com', disabled: true },
+    { name: 'out', email: 'out@example.com', auth_error_at: '2026-01-01T00:00:00Z' },
+  ], (p) => {
+    p.leases.push({ id: 'l', account: 'busy', pid: process.pid, role: 'run' });
+    p.cooldowns[`cool|${FAMILY}`] = { retry_at: later };
+  });
+  const refused = (name) => {
+    const r = run(sb, ['accounts', 'hold', 'acquire', name, '--pid', String(process.pid), '--family', FAMILY, '--json']);
+    assert.equal(r.code, 1, name);
+    return JSON.parse(r.stdout).refused;
+  };
+  assert.equal(refused('nobody').reason, 'unknown');
+  assert.equal(refused('busy').reason, 'busy');
+  assert.deepEqual([refused('cool').reason, refused('cool').retry_at], ['quota_exhausted', later]);
+  for (const name of ['off', 'out']) {
+    assert.equal(run(sb, ['accounts', 'hold', 'acquire', name, '--pid', String(process.pid)]).code, 0, name);
+  }
+  const plain = run(sb, ['accounts', 'hold', 'acquire', 'cool', '--pid', String(process.pid)]);
+  assert.equal(plain.code, 0, 'without --family a cooldown does not refuse the hold');
+  assert.equal(run(sb, ['accounts', 'hold', 'acquire', 'cool']).code, 1, '--pid is required');
+});
+
+test('a hold whose process died is reaped on the next update', async () => {
+  const sb = sandbox('pool-hold-reap');
+  const dead = await deadPid();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => p.leases.push({ id: 'h', account: 'a', pid: dead, role: 'hold' }));
+  assert.equal(list(sb).accounts[0].state, 'ready');
+  assert.deepEqual(readPool(sb).leases, []);
+});
+
+test('cooldown record adds a quota cooldown and never shortens one in force', () => {
+  const sb = sandbox('pool-cooldown-record');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
+  const record = (at) => run(sb, ['accounts', 'cooldown', 'record', 'a', '--family', FAMILY, '--retry-at', at, '--json']);
+  const later = new Date(Date.now() + 2 * 3600_000).toISOString();
+  const sooner = new Date(Date.now() + 3600_000).toISOString();
+  assert.equal(JSON.parse(record(later).stdout).cooldown.retry_at, later);
+  assert.equal(JSON.parse(record(sooner).stdout).cooldown.retry_at, later);
+  assert.equal(readPool(sb).cooldowns[`a|${FAMILY}`].reason, 'quota_exhausted');
+  assert.equal(JSON.parse(record('2000-01-01T00:00:00Z').stdout).cooldown.retry_at, later);
+  assert.equal(run(sb, ['accounts', 'cooldown', 'record', 'a', '--family', FAMILY, '--retry-at', 'soon']).code, 1);
+  assert.equal(run(sb, ['accounts', 'cooldown', 'record', 'a', '--retry-at', later]).code, 1);
+});
+
 test('a pool.json from a newer version is refused, never reset', () => {
   const sb = sandbox('pool-newer');
   fs.mkdirSync(globalHomeOf(sb), { recursive: true });
