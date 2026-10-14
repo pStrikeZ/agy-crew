@@ -1,6 +1,6 @@
 {
   "name": "agy-crew",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Delegate work to Google's Antigravity CLI (agy) across a pool of accounts. A fork of agy-staff.",
   "bin": {
     "agy-crew": "companion/agy-companion.mjs"
