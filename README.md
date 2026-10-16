@@ -178,6 +178,8 @@ Respond in the user's language.
 Route A (npm):
 
 ```bash
+# installed version (and agy's)
+agy-crew version
 # update
 npm install -g agy-crew@latest && agy-crew install   # then restart the harness
 # uninstall

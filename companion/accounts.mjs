@@ -342,6 +342,21 @@ function cmdHold(opts) {
 
 const START_USAGE = 'usage: start <name> [-- <agy args>...]';
 
+/** What `start` without a name prints: usage, the accounts to choose from and an example. */
+export function startHelp() {
+  const pool = currentPool();
+  const now = Date.now();
+  const lines = [`usage: ${PRODUCT} start <name> [-- <agy args>...]`,
+    'Runs agy interactively in this directory as pool account <name>, holding the account until agy exits.',
+    'Arguments after -- go to agy unchanged.', ''];
+  if (!pool.accounts.length) return [...lines, `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`.`].join('\n');
+  const rows = pool.accounts.map((a) => ({ name: a.name, email: a.email, state: stateLabel(accountState(pool, a, now)) }));
+  lines.push(...renderTable(['ACCOUNT', 'EMAIL', 'STATE'], rows.map((r) => [r.name, r.email || 'unknown', r.state])));
+  const ready = rows.find((r) => r.state === 'ready' || r.state === 'cooling');
+  if (ready) lines.push('', `example: ${PRODUCT} start ${ready.name}`);
+  return lines.join('\n');
+}
+
 /** Run agy interactively in this terminal as pool account <name>, in the
  *  current directory. The account is held for the whole session (the same
  *  lease as `accounts hold`, owned by this process), so background runs stay
@@ -390,12 +405,58 @@ export async function cmdStart(name, agyArgs, { agyCommand }) {
   }
 }
 
+const STAGE_LABELS = { start: 'reading token', warmup: 'renewing token via agy', query: 'asking Cloud Code' };
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
+/** Progress of `quota --refresh` on stderr, so stdout stays the table or JSON.
+ *  A terminal gets a live line saying which account is being refreshed and
+ *  what it waits on, plus one line per finished account; anything else gets
+ *  just the finished lines. */
+function refreshProgress(total, { quiet = false, stream = process.stderr } = {}) {
+  const noop = () => {};
+  if (quiet || !total) return { stage: noop, done: noop, finish: noop };
+  const tty = !!stream.isTTY;
+  let current = null, finished = 0, frame = 0, timer = null;
+  const clear = () => { if (tty) stream.write('\r\x1b[K'); };
+  const draw = () => {
+    if (!tty || !current) return;
+    const width = (stream.columns || 120) - 1;
+    const now = Date.now();
+    let line = `${SPINNER[frame++ % SPINNER.length]} [${finished + 1}/${total}] ${current.name}: ` +
+      `${STAGE_LABELS[current.stage]} ${seconds(now - current.since)}`;
+    if (line.length > width) line = line.slice(0, width - 1) + '…';
+    clear();
+    stream.write(line);
+  };
+  stream.write(`Refreshing quota for ${total} account(s), one at a time...\n`);
+  if (tty) timer = setInterval(draw, 100);
+  return {
+    stage(name, stage) {
+      const now = Date.now();
+      current = { name, stage, since: now, started: current?.name === name ? current.started : now };
+      draw();
+    },
+    done(name, snapshot) {
+      const took = seconds(Date.now() - (current?.started ?? Date.now()));
+      current = null;
+      finished++;
+      clear();
+      stream.write(snapshot.error ? `  ✗ ${name} (${took}): ${snapshot.error}\n` : `  ✓ ${name} (${took})\n`);
+    },
+    finish() { if (timer) clearInterval(timer); clear(); },
+  };
+}
+
 async function cmdQuota(opts, deps) {
   const pool = currentPool();
   const names = opts._.slice(1);
   for (const name of names) requireAccount(pool, name);
   const targets = names.length ? names : pool.accounts.map((a) => a.name);
-  if (opts.refresh) await refreshQuotas(targets, deps);
+  if (opts.refresh) {
+    const progress = refreshProgress(targets.length, { quiet: opts.json && !process.stderr.isTTY });
+    try { await refreshQuotas(targets, deps, progress); } finally { progress.finish(); }
+  }
   const latest = currentPool();
   const now = Date.now();
   const rows = targets.map((name) => ({ name, snapshot: latest.quota[name] || null,

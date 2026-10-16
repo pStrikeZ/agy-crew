@@ -246,6 +246,8 @@ agent 动手写代码之前，会先列出你的 CLI 支持不了哪些原则，
 路线 A（npm）：
 
 ```bash
+# 已安装的版本（以及 agy 的版本）
+agy-crew version
 # 升级
 npm install -g agy-crew@latest && agy-crew install   # 之后重启 harness
 # 卸载

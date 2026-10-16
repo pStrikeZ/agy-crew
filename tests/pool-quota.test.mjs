@@ -146,3 +146,18 @@ test('quota for an unknown account is an error', () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /unknown account "ghost"/);
 });
+
+test('quota --refresh reports progress per account on stderr, and stays quiet for --json off a terminal', async () => {
+  const sb = sandbox('pool-quota-progress');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }, { name: 'b', email: 'b@x' }]);
+  const server = await cloudCode((token) => token === 'fake-access');
+  try {
+    const text = await runAsync(sb, ['accounts', 'quota', '--refresh'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(text.code, 0, text.stderr);
+    assert.match(text.stderr, /^Refreshing quota for 2 account\(s\), one at a time\.\.\.\n  ✓ a \(\d+\.\ds\)\n  ✓ b \(\d+\.\ds\)\n$/);
+    assert.doesNotMatch(text.stdout, /Refreshing/);
+    const json = await runAsync(sb, ['accounts', 'quota', '--refresh', '--json'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(json.stderr, '');
+  } finally { await server.close(); }
+});

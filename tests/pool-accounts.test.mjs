@@ -375,7 +375,10 @@ test('start refuses unknown, busy, disabled and signed-out accounts without laun
     assert.equal(r.code, 1, name);
     assert.match(r.stderr, why, name);
   }
-  assert.match(run(sb, ['start']).stderr, /usage: start <name>/);
+  const help = run(sb, ['start']);
+  assert.equal(help.code, 1);
+  assert.match(help.stderr, /usage: agy-crew start <name>/);
+  assert.match(help.stderr, /busy +busy@example\.com +busy 1/, 'start without a name lists the accounts');
   assert.match(run(sb, ['start', 'a', 'b']).stderr, /usage: start <name>/);
   assert.deepEqual(agyCalls(sb), []);
   assert.deepEqual(readPool(sb).leases.map((l) => l.id), ['l']);
@@ -389,4 +392,30 @@ test('start notes a cooldown but still launches', () => {
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stderr, new RegExp(`no ${FAMILY} quota until ${later}`));
   assert.equal(agyCalls(sb).length, 1);
+});
+
+test('start without a name on an empty pool says how to add an account', () => {
+  const sb = sandbox('pool-start-empty');
+  const r = run(sb, ['start']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /No pool accounts yet\. Add one with `agy-crew accounts login <name>`/);
+});
+
+test('help and version', () => {
+  const sb = sandbox('help-version');
+  const bare = run(sb, []);
+  assert.equal(bare.code, 1);
+  assert.doesNotMatch(bare.stderr, /error/);
+  for (const arg of ['help', '--help', '-h']) {
+    const r = run(sb, [arg]);
+    assert.equal(r.code, 0, arg);
+    assert.equal(r.stdout, bare.stderr, arg);
+  }
+  assert.match(bare.stderr, /start <name> \[-- <agy args>\]/);
+  const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const arg of ['version', '--version', '-v']) {
+    const r = run(sb, [arg]);
+    assert.equal(r.code, 0, arg);
+    assert.equal(r.stdout, `agy-crew ${version}\nagy 1.1.13-fake\n`, arg);
+  }
 });

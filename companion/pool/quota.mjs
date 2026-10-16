@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { accountEnv } from './env.mjs';
 import { accountHome, updatePool } from './state.mjs';
 import { quotaPool } from './results.mjs';
@@ -10,10 +10,15 @@ const baseUrl = () => process.env.AGY_CREW_CLOUDCODE_URL || 'https://cloudcode-p
 const WARM_UP_MS = 120_000;
 const projectCache = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
 
-/** Run agy once so it refreshes the file-backed token itself. */
+/** Run agy once so it refreshes the file-backed token itself. Async, so the
+ *  progress line keeps drawing meanwhile. */
 function warmUp(home, agyCommand) {
   const agy = agyCommand(['-p', 'reply with one word: pong', '--output-format', 'json']);
-  spawnSync(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), encoding: 'utf8', timeout: 60_000, windowsHide: true });
+  return new Promise((resolve) => {
+    const child = spawn(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), stdio: 'ignore', timeout: 60_000, windowsHide: true });
+    child.on('error', resolve);
+    child.on('close', resolve);
+  });
 }
 
 async function post(endpoint, accessToken, body) {
@@ -83,18 +88,22 @@ async function queryCloudCode(home, accessToken) {
 
 const needsWarmUp = (tok) => !tok?.access_token || (tok.expiry_ms !== null && tok.expiry_ms - Date.now() < WARM_UP_MS);
 
-/** Query Cloud Code for one account. Never throws, never prints tokens. */
-export async function fetchSnapshot(name, { agyCommand }) {
+/** Query Cloud Code for one account. Never throws, never prints tokens.
+ *  onStage('warmup' | 'query') reports what it is waiting on. */
+export async function fetchSnapshot(name, { agyCommand }, onStage = () => {}) {
   const home = accountHome(name);
   const snapshot = { refreshed_at: new Date().toISOString(), plan_type: null, pools: {}, error: null };
   let authFailed = false;
   try {
     let tok = readToken(home);
-    if (needsWarmUp(tok)) { warmUp(home, agyCommand); tok = readToken(home); }
+    if (needsWarmUp(tok)) { onStage('warmup'); await warmUp(home, agyCommand); tok = readToken(home); }
     if (!tok?.access_token) throw new Error('no access token (run `accounts login`)');
+    onStage('query');
     let result = await queryCloudCode(home, tok.access_token);
     if (result.status === 401) {
-      warmUp(home, agyCommand);
+      onStage('warmup');
+      await warmUp(home, agyCommand);
+      onStage('query');
       tok = readToken(home);
       result = tok?.access_token ? await queryCloudCode(home, tok.access_token) : { status: 401 };
       if (result.status === 401) { authFailed = true; throw new Error('Cloud Code rejected the credential (HTTP 401)'); }
@@ -108,11 +117,18 @@ export async function fetchSnapshot(name, { agyCommand }) {
   return { snapshot, authFailed };
 }
 
-/** Fetch snapshots, then store them in one locked update. A pool with quota
- *  left clears that account's cooldowns for its families. */
-export async function refreshQuotas(names, deps) {
+/** Fetch snapshots one account at a time (parallel requests from one machine
+ *  for several Google accounts look like abuse), then store them in one locked
+ *  update. A pool with quota left clears that account's cooldowns for its
+ *  families. progress: { stage(name, stage), done(name, snapshot) }. */
+export async function refreshQuotas(names, deps, progress = {}) {
   const fetched = [];
-  for (const name of names) fetched.push([name, await fetchSnapshot(name, deps)]);
+  for (const name of names) {
+    progress.stage?.(name, 'start');
+    const result = await fetchSnapshot(name, deps, (stage) => progress.stage?.(name, stage));
+    fetched.push([name, result]);
+    progress.done?.(name, result.snapshot);
+  }
   updatePool((pool) => {
     for (const [name, { snapshot, authFailed }] of fetched) {
       const account = pool.accounts.find((a) => a.name === name);

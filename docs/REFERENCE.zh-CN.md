@@ -104,6 +104,10 @@ agy 还有与 `--project` 体系关联的项目级权限规则，可以将权限
 
 <a id="统一-flags各模式一致"></a>
 
+## 帮助和版本
+
+`agy-crew help`（也可用 `--help`、`-h`）在标准输出打印所有命令的概览并以 0 退出；不带参数运行 `agy-crew` 时，同样的内容输出到标准错误并以 1 退出。`agy-crew version`（也可用 `--version`、`-v`）输出 `agy-crew <版本>` 和 `agy <版本>`（无法运行 agy 时为 `agy not found`）。
+
 ## 命令行参数
 
 这些参数属于 companion CLI。通过角色技能发起任务时，主 agent 会按需组装命令；只有直接调用 companion 时，才需要自己填写。
@@ -345,16 +349,20 @@ agy-crew 之外的进程如果用某个池账号凭据的副本运行 agy，可�
 
 agy 运行期间，该账号的持有方式与以 companion 自身 pid 执行 `accounts hold acquire` 完全相同：后台任务不会使用它，它不会出借凭据，令牌也不会被借用替换。agy 退出时持有结束（companion 被强制结束时，在下一次加锁更新中清理），companion 以 agy 的退出码退出。
 
+不带账号名时，`start` 输出用法、各账号的邮箱和状态以及一个示例，并以 1 退出。
+
 账号不存在、已停用、需要登录，或有任何租约或借用（`in use`）时，`start` 在启动 agy 之前就会拒绝。正在冷却不会拒绝，因为交互式会话可以自己选模型；冷却信息会作为提示输出到标准错误。这样开启的会话不会记录在账号池中，`continue` 无法接续它们。
 
 ### 配额快照
 
-不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会针对每个账号向 Google 的 Cloud Code 服务查询：
+不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会逐个账号向 Google 的 Cloud Code 服务查询（从不并发，避免同一台机器同时查询多个 Google 账号）：
 
 1. 读取令牌。若访问令牌缺失，或将在 120 秒内过期，就用该账号的环境运行 `agy -p "reply with one word: pong" --output-format json` 预热（超时 60 秒），然后重新读取。
 2. 调用 `loadCodeAssist` 获取项目和套餐类型（失败时使用缓存的 `home/.gemini/antigravity-cli/cache/default_project_id.txt`），再调用 `retrieveUserQuotaSummary`。每个请求的超时为 20 秒。
 3. 把配额分组解析到 `gemini` 和 `other` 两个池，每个池各有短窗口（5h）和每周窗口，记录剩余比例和重置时间。
 4. 遇到 `401` 时先预热并重试一次；仍然失败就记录错误，并把该账号标记为 `needs login`。
+
+进度输出到标准错误，标准输出只保留表格或 JSON：先是一行标题，之后每个账号一行 `✓ <name> (<秒数>)` 或 `✗ <name> (<秒数>): <错误>`。在终端中还会有一行实时状态，显示正在刷新的账号、正在等待的步骤（`reading token`、`renewing token via agy`、`asking Cloud Code`）以及已等待的时间。带 `--json` 且标准错误不是终端时，那里不输出任何内容。
 
 如果刷新后某个配额池的剩余量大于 0，该账号在此池内各模型家族的冷却会被清除。令牌不会被打印。**只有 `accounts quota --refresh` 会访问网络**，任务分发期间从不联网。
 

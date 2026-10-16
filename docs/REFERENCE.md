@@ -103,6 +103,10 @@ If a machine-wide allowlist is too broad for you, agy also supports project-scop
 
 Caveat, stated plainly: **the exact project-settings file path is undocumented and unverified against the current agy release**, so agy-crew does not write it and this document does not guess it. If you want project scoping, check `agy` interactively for where it reads project-level rules from, and configure it yourself. Until then, either accept the global scope or skip setup entirely — the default unrestricted profile bypasses agy's permission system rather than depending on it, and `ask` needs no allowlist at all; skipping setup only costs you the ability to harden a run with `--restricted`.
 
+## Help and version
+
+`agy-crew help` (also `--help`, `-h`) prints an overview of every command on stdout and exits 0; `agy-crew` with no arguments prints the same text on stderr and exits 1. `agy-crew version` (also `--version`, `-v`) prints `agy-crew <version>` and `agy <version>` (`agy not found` when agy cannot be run).
+
 ## Flags (uniform across modes)
 
 | Flag | Meaning |
@@ -296,16 +300,20 @@ The holder runs its own copy of the credential, so whether agy-crew's copy is di
 
 For as long as agy runs, the account is held exactly as by `accounts hold acquire` with the companion's own pid: background runs stay off it, it never lends, and its token is never swapped by a loan. The hold ends when agy exits (or on the next locked update if the companion is killed), and the companion exits with agy's exit code.
 
+Without a name, `start` prints its usage, the accounts with their email and state, and an example, and exits 1.
+
 `start` is refused before launching agy when the account is unknown, disabled, needs login, or has any lease or loan (`in use`). An active cooldown does not refuse it, since an interactive session can pick its own model; it is printed as a note on stderr. Conversations started this way are not recorded in the pool, so `continue` does not know about them.
 
 ### Quota snapshots
 
-`accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, per account:
+`accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, one account at a time (never in parallel, so several Google accounts are not queried from one machine at once):
 
 1. Read the token. If the access token is missing or expires within 120 seconds, warm up by running `agy -p "reply with one word: pong" --output-format json` with the account's environment (60 s timeout), then reread it.
 2. Call `loadCodeAssist` to learn the project and plan type (falling back to the cached `home/.gemini/antigravity-cli/cache/default_project_id.txt`), then `retrieveUserQuotaSummary`. Each request has a 20 s timeout.
 3. Parse the quota groups into the `gemini` and `other` pools, each with a short (5h) and a weekly window: remaining fraction and reset time.
 4. On `401` the account is warmed up once and retried; if it still fails, the error is recorded and the account is marked `needs login`.
+
+Progress goes to stderr, so stdout keeps only the table or JSON: a header line, then one `✓ <name> (<seconds>)` or `✗ <name> (<seconds>): <error>` line per account. On a terminal a live line also shows the account being refreshed, what it is waiting on (`reading token`, `renewing token via agy`, `asking Cloud Code`) and for how long. With `--json` and stderr not a terminal, nothing is printed there.
 
 A refreshed snapshot with remaining quota above zero for a pool clears that account's cooldowns for the families in that pool. Tokens are never printed. **Network access happens only in `accounts quota --refresh`**, never during dispatch.
 
