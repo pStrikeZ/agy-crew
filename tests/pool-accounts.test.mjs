@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { run, sandbox } from './helpers.mjs';
-import { FAMILY, accountHomeOf, deadPid, emailOfToken, globalHomeOf, poolFile, readPool, seedPool, tokenFileOf, tokenJson, writePool } from './pool-helpers.mjs';
+import { agyCalls, run, sandbox } from './helpers.mjs';
+import { FAMILY, accountHomeOf, deadPid, emailOfToken, envCalls, globalHomeOf, poolFile, readPool, runAsync, seedPool, tokenFileOf, tokenJson, writePool } from './pool-helpers.mjs';
 
 const login = (sb, name, email, extra = {}) => run(sb, ['accounts', 'login', name], { FAKE_AGY_LOGIN_EMAIL: email, ...extra });
 const list = (sb) => JSON.parse(run(sb, ['accounts', 'list', '--json']).stdout);
@@ -338,4 +338,55 @@ test('usage text documents accounts and --account', () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /accounts/);
   assert.match(r.stderr, /--account <auto\|live\|name>/);
+});
+
+test('start runs agy in this directory as the account, holding it until agy exits', async () => {
+  const sb = sandbox('pool-start');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }]);
+  const envFile = path.join(sb.root, 'env.jsonl');
+  const cwdFile = path.join(sb.root, 'cwd.txt');
+  const running = runAsync(sb, ['start', 'b', '--', '--model', 'x', '--json'],
+    { FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_CWD_FILE: cwdFile, FAKE_AGY_SLEEP_MS: '1500', FAKE_AGY_EXIT: '3' });
+  let leases = [];
+  for (let i = 0; i < 100 && !leases.length; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    try { leases = readPool(sb).leases; } catch {}
+  }
+  assert.deepEqual(leases.map((l) => [l.account, l.role]), [['b', 'hold']], 'b is held while agy runs');
+  const r = await running;
+  assert.equal(r.code, 3, 'agy\'s exit code is passed on');
+  assert.deepEqual(agyCalls(sb), [['--model', 'x', '--json']], 'args after -- reach agy untouched');
+  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]), [[accountHomeOf(sb, 'b'), 'b@example.com']]);
+  assert.equal(fs.readFileSync(cwdFile, 'utf8'), sb.repo);
+  const pool = readPool(sb);
+  assert.deepEqual(pool.leases, [], 'the hold ends with agy');
+  assert.ok(pool.accounts.find((a) => a.name === 'b').last_used_at);
+});
+
+test('start refuses unknown, busy, disabled and signed-out accounts without launching agy', () => {
+  const sb = sandbox('pool-start-refused');
+  seedPool(sb, [
+    { name: 'busy', email: 'busy@example.com' },
+    { name: 'off', email: 'off@example.com', disabled: true },
+    { name: 'out', email: 'out@example.com', auth_error_at: '2026-01-01T00:00:00Z' },
+  ], (p) => p.leases.push({ id: 'l', account: 'busy', pid: process.pid, role: 'run' }));
+  for (const [name, why] of [['nobody', /unknown account/], ['busy', /in use/], ['off', /disabled/], ['out', /needs login/]]) {
+    const r = run(sb, ['start', name]);
+    assert.equal(r.code, 1, name);
+    assert.match(r.stderr, why, name);
+  }
+  assert.match(run(sb, ['start']).stderr, /usage: start <name>/);
+  assert.match(run(sb, ['start', 'a', 'b']).stderr, /usage: start <name>/);
+  assert.deepEqual(agyCalls(sb), []);
+  assert.deepEqual(readPool(sb).leases.map((l) => l.id), ['l']);
+});
+
+test('start notes a cooldown but still launches', () => {
+  const sb = sandbox('pool-start-cooling');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => { p.cooldowns[`a|${FAMILY}`] = { retry_at: later }; });
+  const r = run(sb, ['start', 'a']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, new RegExp(`no ${FAMILY} quota until ${later}`));
+  assert.equal(agyCalls(sb).length, 1);
 });

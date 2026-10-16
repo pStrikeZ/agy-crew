@@ -34,6 +34,7 @@ node "<skill-dir>/../../companion/agy-companion.mjs" accounts <subcommand> [args
 | `accounts cooldown clear <name> [--family <f>]` | Drop a recorded quota cooldown. Use it only when the user says the quota is back. |
 | `accounts remove <name> [--yes]` | Delete an account. Without `--yes` it only prints what would be deleted. |
 | `accounts login <name>` | Interactive sign-in. **Do not run this yourself**, see below. |
+| `start <name> [-- <agy args>...]` | Interactive agy as that account in the current directory, holding it until agy exits. Needs the user's terminal: **do not run this yourself**; tell the user to run `agy-crew start <name>`. |
 
 Add `--json` when you need to parse the output; otherwise read the table.
 

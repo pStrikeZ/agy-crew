@@ -109,7 +109,7 @@ import { cmdInstall, cmdUninstall } from './install.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
-import { cmdAccounts, poolSettingsFiles } from './accounts.mjs';
+import { cmdAccounts, cmdStart, poolSettingsFiles } from './accounts.mjs';
 import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
 import { classifyFailureText, isCooldownReason, modelFamily } from './pool/results.mjs';
 import { loadPool, updatePool, poolExists } from './pool/state.mjs';
@@ -2121,7 +2121,7 @@ function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     die(
-      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup|install|uninstall|accounts> [flags]\n' +
+      'usage: agy-companion.mjs <staffer|research|review|implement|ask|continue|restart|observe|status|wait|result|cancel|setup|install|uninstall|accounts|start> [flags]\n' +
         'flags: --restricted|--unrestricted --model <id> --effort <l|m|h> --timeout <dur> ' +
         '--prompt <text> --prompt-file <path> --stdin --conversation <id> --continue --json (review) ' +
         '--account <auto|live|name> (run commands, continue, restart) ' +
@@ -2130,12 +2130,21 @@ function main() {
         '(login <name>; import <name> --home <dir>; remove <name> --yes; cooldown clear <name> --family <f>; ' +
         'cooldown record <name> --family <f> --retry-at <time>; hold acquire <name> --pid <pid> --family <f> --json; hold release <id>; ' +
         'quota [<name>...] --refresh --json; list --json).\n' +
+        'start <name> [-- <agy args>] runs agy interactively in this terminal as pool account <name>, holding it until agy exits.\n' +
         'task text for staffer/research/review/implement/ask/continue comes from exactly one of ' +
         '--prompt <text>, --prompt-file <path>, or --stdin.\n' +
         'staffer/research/review/implement run unrestricted by default (no setup needed); --restricted is the ' +
         'hardening opt-in that uses the evidence-gathering allowlist from `setup`. ask is always tool-free. ' +
         'Per-repo policy: `setup --restrict review,research` makes those modes restricted by default here.'
     );
+  }
+  if (cmd === 'start') {
+    // Everything after `--` goes to agy untouched, so it is never parsed as companion flags.
+    const split = rest.indexOf('--');
+    const own = split < 0 ? rest : rest.slice(0, split);
+    if (own.length !== 1) die('usage: start <name> [-- <agy args>...]');
+    return cmdStart(own[0], split < 0 ? [] : rest.slice(split + 1), { agyCommand })
+      .then((code) => { process.exitCode = code; });
   }
   const opts = parseFlags(rest, { taskCommand: MODES.includes(cmd) || cmd === 'continue' });
 

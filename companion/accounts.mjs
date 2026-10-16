@@ -8,14 +8,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { PRODUCT } from './identity.mjs';
 import { accountEnv } from './pool/env.mjs';
 import { accountDir, accountHome, accountSettingsPath, loadPool, poolExists, poolPaths, tokenPath,
   updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
-import { activeCooldown, exhaustedSnapshot, holdOn } from './pool/select.mjs';
+import { activeCooldown, exhaustedSnapshot, findAccount, holdOn } from './pool/select.mjs';
 import { readToken } from './pool/token.mjs';
 import { refreshQuotas } from './pool/quota.mjs';
 import { formatAgo, renderCooldowns, renderQuotaTable, renderTable } from './pool/format.mjs';
@@ -338,6 +338,56 @@ function cmdHold(opts) {
     return opts.json ? printJson({ released }) : out(released ? `Released hold ${id}.` : `No hold ${id}.`);
   }
   throw new PoolError(HOLD_USAGE);
+}
+
+const START_USAGE = 'usage: start <name> [-- <agy args>...]';
+
+/** Run agy interactively in this terminal as pool account <name>, in the
+ *  current directory. The account is held for the whole session (the same
+ *  lease as `accounts hold`, owned by this process), so background runs stay
+ *  off it and its token is never swapped by a loan meanwhile. Resolves to
+ *  agy's exit code. */
+export async function cmdStart(name, agyArgs, { agyCommand }) {
+  if (!name || name.startsWith('-')) throw new PoolError(START_USAGE);
+  const outcome = updatePool((pool) => {
+    const account = findAccount(pool, name);
+    if (account?.disabled) return { refused: { message: `account ${name} is disabled (accounts enable ${name})` } };
+    if (account && (account.auth_error_at || !fs.existsSync(tokenPath(accountHome(name))))) {
+      return { refused: { message: `account ${name} needs login (accounts login ${name})` } };
+    }
+    const refused = holdRefusal(pool, name, null, process.pid, Date.now());
+    if (refused) return { refused };
+    const hold = { id: randomUUID().slice(0, 8), account: name, role: 'hold', pid: process.pid, job_id: null, started_at: new Date().toISOString() };
+    pool.leases.push(hold);
+    account.last_used_at = hold.started_at;
+    const now = Date.now();
+    const cooling = Object.entries(pool.cooldowns).filter(([k, c]) => k.startsWith(`${name}|`) && Date.parse(c.retry_at) > now)
+      .map(([k, c]) => ({ family: k.split('|')[1], retry_at: c.retry_at }));
+    return { hold, cooling };
+  });
+  if (outcome.refused) throw new PoolError(outcome.refused.message);
+  const { hold, cooling } = outcome;
+  for (const c of cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${c.family} quota until ${c.retry_at}\n`);
+  const release = () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); });
+  // agy owns the terminal: Ctrl+C reaches it through the process group, so this
+  // process only waits; other signals are passed on.
+  const ignore = () => {};
+  const forward = (signal) => { try { child.kill(signal); } catch {} };
+  let child;
+  process.on('SIGINT', ignore);
+  for (const s of ['SIGTERM', 'SIGHUP']) process.on(s, forward);
+  try {
+    const agy = agyCommand(agyArgs);
+    child = spawn(agy.cmd, agy.args, { cwd: process.cwd(), env: accountEnv(accountHome(name)), stdio: 'inherit', windowsHide: true });
+    return await new Promise((resolve, reject) => {
+      child.on('error', (error) => reject(new PoolError(`failed to launch agy: ${error.message}`)));
+      child.on('exit', (code, signal) => resolve(code ?? (signal ? 128 + (os.constants.signals[signal] || 0) : 1)));
+    });
+  } finally {
+    process.off('SIGINT', ignore);
+    for (const s of ['SIGTERM', 'SIGHUP']) process.off(s, forward);
+    release();
+  }
 }
 
 async function cmdQuota(opts, deps) {

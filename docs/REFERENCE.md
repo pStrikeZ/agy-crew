@@ -213,6 +213,7 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 | `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | Record a quota cooldown observed outside agy-crew, until the given ISO 8601 time. A time already past, or earlier than a cooldown in force, changes nothing. `--json` prints `{ "cooldown": ... }` with the cooldown now in force |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | Keep agy-crew off an account while another process uses its credential. See [External holds](#external-holds) |
+| `start <name> [-- <agy args>...]` | Run agy interactively in this terminal, in the current directory, as pool account `<name>`. See [Interactive sessions](#interactive-sessions) |
 | `accounts remove <name> [--yes]` | Without `--yes`, print what would be deleted and exit 0. With `--yes`, delete the account directory, its cooldowns, quota snapshot and conversation bindings, and report how many conversations became unusable. Refused while the account is in a lease or loan |
 
 `--json` prints machine-readable output. These commands exit 0 on success and 1 on error. They never create per-repository state, so they work from any directory.
@@ -288,6 +289,14 @@ A process outside agy-crew that runs agy with a copy of a pool account's credent
 `accounts hold acquire <name> --pid <pid>` records the hold as a lease with `role: "hold"` owned by `<pid>`, in the same locked update as the checks below. The hold ends with `accounts hold release <id>`, or on the next locked update after `<pid>` exits. Acquiring again with the same pid returns the existing hold.
 
 The holder runs its own copy of the credential, so whether agy-crew's copy is disabled or needs login does not matter. The hold is refused when agy-crew has no such account (`unknown`), when the account has any other lease or loan, including a hold by another pid (`busy`), or, when `--family <f>` is given, when it has a cooldown or an empty quota snapshot for that family (the cooldown's reason, usually `quota_exhausted`, with `retry_at`). A refusal exits 1 with the message on stderr; with `--json` it also prints `{ "refused": { "reason", "message", "retry_at"? } }` on stdout. A granted hold prints `{ "hold": { "id", "account", "role", "pid", "started_at", ... } }`.
+
+### Interactive sessions
+
+`start <name> [-- <agy args>...]` runs agy with the terminal attached, in the current directory, with the account's environment (its private HOME and the file-token markers), so you can use a pool account by hand without signing in to agy yourself. Everything after `--` is passed to agy unchanged; nothing else may follow the name.
+
+For as long as agy runs, the account is held exactly as by `accounts hold acquire` with the companion's own pid: background runs stay off it, it never lends, and its token is never swapped by a loan. The hold ends when agy exits (or on the next locked update if the companion is killed), and the companion exits with agy's exit code.
+
+`start` is refused before launching agy when the account is unknown, disabled, needs login, or has any lease or loan (`in use`). An active cooldown does not refuse it, since an interactive session can pick its own model; it is printed as a note on stderr. Conversations started this way are not recorded in the pool, so `continue` does not know about them.
 
 ### Quota snapshots
 

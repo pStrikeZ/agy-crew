@@ -262,6 +262,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
+| `start <name> [-- <agy args>...]` | 在当前终端、当前目录下以池账号 `<name>` 的身份交互式运行 agy。见[交互式会话](#交互式会话) |
 | `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |
 
 `--json` 输出机器可读的结果。这些命令成功时退出码为 0，出错时为 1。它们不会创建仓库内状态，因此可以在任意目录运行。
@@ -337,6 +338,14 @@ agy-crew 之外的进程如果用某个池账号凭据的副本运行 agy，可�
 `accounts hold acquire <name> --pid <pid>` 在一次加锁更新中完成下面的检查，并把持有记录为一条 `role: "hold"`、属于 `<pid>` 的租约。持有在 `accounts hold release <id>` 时结束，或在 `<pid>` 退出后的下一次加锁更新中被清理。同一个 pid 再次申请时返回已有的持有。
 
 持有方使用的是自己那份凭据副本，所以 agy-crew 里这份是否停用、是否需要登录都不影响持有。以下情况会拒绝持有：agy-crew 中没有该账号（`unknown`）；账号有任何其他租约或借用，包括其他 pid 的持有（`busy`）；给出 `--family <f>` 时，该家族正在冷却或配额快照显示已耗尽（原因取冷却的原因，通常为 `quota_exhausted`，并带 `retry_at`）。被拒绝时以 1 退出，错误信息输出到标准错误；带 `--json` 时还会在标准输出打印 `{ "refused": { "reason", "message", "retry_at"? } }`。持有成功时输出 `{ "hold": { "id", "account", "role", "pid", "started_at", ... } }`。
+
+### 交互式会话
+
+`start <name> [-- <agy args>...]` 在当前目录、连接当前终端运行 agy，使用该账号的环境（它的私有 HOME 和文件令牌标记），这样不用自己登录 agy 就能手动使用池账号。`--` 之后的参数原样传给 agy；账号名之后不能再有其他参数。
+
+agy 运行期间，该账号的持有方式与以 companion 自身 pid 执行 `accounts hold acquire` 完全相同：后台任务不会使用它，它不会出借凭据，令牌也不会被借用替换。agy 退出时持有结束（companion 被强制结束时，在下一次加锁更新中清理），companion 以 agy 的退出码退出。
+
+账号不存在、已停用、需要登录，或有任何租约或借用（`in use`）时，`start` 在启动 agy 之前就会拒绝。正在冷却不会拒绝，因为交互式会话可以自己选模型；冷却信息会作为提示输出到标准错误。这样开启的会话不会记录在账号池中，`continue` 无法接续它们。
 
 ### 配额快照
 
