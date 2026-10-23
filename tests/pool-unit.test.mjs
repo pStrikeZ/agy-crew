@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { classifyFailureText, isAuthFailed, isQuotaExhausted, isUpstreamUnavailable, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
 import { recordCooldown } from '../companion/pool/lease.mjs';
 import { accountEnv } from '../companion/pool/env.mjs';
 import { chooseAccount, chooseLender } from '../companion/pool/select.mjs';
 import { parseQuotaSummary } from '../companion/pool/quota.mjs';
-import { loadPool, updatePool, validateAccountName } from '../companion/pool/state.mjs';
-import { emptyPool } from './pool-helpers.mjs';
+import { loadPool, tokenPath, updatePool, validateAccountName } from '../companion/pool/state.mjs';
+import { readToken } from '../companion/pool/token.mjs';
+import { emptyPool, tokenJson } from './pool-helpers.mjs';
 
 const NOW = Date.parse('2026-06-01T12:00:00Z');
 const FAMILY = 'gemini-3.8-flash';
@@ -242,4 +246,20 @@ test('parseQuotaSummary maps groups to pools and windows', () => {
   assert.equal(pools.gemini.daily, undefined);
   assert.equal(pools.other.short.remaining, 0.1);
   assert.equal(Object.keys(pools).length, 2);
+});
+
+test('readToken takes the email from an id_token JWT or a plain id_token_email', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-crew-token-'));
+  const write = (json) => { fs.mkdirSync(path.dirname(tokenPath(home)), { recursive: true }); fs.writeFileSync(tokenPath(home), JSON.stringify(json)); };
+  try {
+    write(tokenJson('jwt@example.com'));
+    assert.equal(readToken(home).email, 'jwt@example.com');
+    const { token } = tokenJson('unused@example.com');
+    delete token.id_token;
+    write({ token, auth_method: 'consumer', id_token_email: 'plain@example.com' });
+    assert.equal(readToken(home).email, 'plain@example.com');
+    assert.equal(readToken(home).access_token, 'fake-access');
+    write({ token, id_token_email: 'not an email' });
+    assert.equal(readToken(home).email, null);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

@@ -10,7 +10,12 @@ function jwtEmail(jwt) {
   } catch { return null; }
 }
 
+/** A plain email field (agy also stores the account as `id_token_email`). */
+const plainEmail = (value) => (typeof value === 'string' && /^[^@\s]+@[^@\s]+$/.test(value) ? value : null);
+
 /** Read a file-backed agy token: access token, expiry (ms) and account email.
+ *  agy records the account either as an `id_token` JWT or as a plain
+ *  `id_token_email`, depending on how it last wrote the file.
  *  null when the file is absent or unreadable. */
 export function readToken(home) {
   let json;
@@ -20,6 +25,6 @@ export function readToken(home) {
   return {
     access_token: t.access_token || null,
     expiry_ms: Number.isFinite(expiry) ? expiry : null,
-    email: jwtEmail(t.id_token) || jwtEmail(json.id_token),
+    email: jwtEmail(t.id_token) || jwtEmail(json.id_token) || plainEmail(t.id_token_email) || plainEmail(json.id_token_email),
   };
 }
