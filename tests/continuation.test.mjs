@@ -62,6 +62,10 @@ test('all follow-up entrypoints reject an active successor while other conversat
   assert.equal(state(sb).jobs.find(j => j.id === next).conversation_id, conversation);
 });
 
+const rmdirIfFree = (dir) => {
+  try { fs.rmdirSync(dir); } catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error; }
+};
+
 test('simultaneous follow-ups recheck occupancy inside registration and leave no rejected spec', async t => {
   const sb = sandbox('continue-registration-race');
   const release = path.join(sb.root, 'release');
@@ -70,7 +74,7 @@ test('simultaneous follow-ups recheck occupancy inside registration and leave no
   const owner = `owner-${process.pid}-${randomUUID()}`;
   let pending = [];
   t.after(async () => {
-    if (fs.existsSync(path.join(lock, owner))) { fs.unlinkSync(path.join(lock, owner)); fs.rmdirSync(lock); }
+    if (fs.existsSync(path.join(lock, owner))) { fs.unlinkSync(path.join(lock, owner)); rmdirIfFree(lock); }
     await Promise.allSettled(pending);
     fs.writeFileSync(release, 'finish');
     for (const j of state(sb).jobs) run(sb, ['cancel', j.id]);
@@ -92,7 +96,9 @@ test('simultaneous follow-ups recheck occupancy inside registration and leave no
   pending = [invoke(), invoke()];
   // Both callers have passed the first guard and are waiting for this lock.
   await until(() => fs.readdirSync(dir).filter(n => n.startsWith('state.json.lock.owner-')).length === 2);
-  fs.unlinkSync(path.join(lock, owner)); fs.rmdirSync(lock);
+  // Once the marker is gone a waiting contender may rename its own lock into
+  // place before this rmdir; that is a normal acquisition, not a failure.
+  fs.unlinkSync(path.join(lock, owner)); rmdirIfFree(lock);
   const results = await Promise.all(pending);
   assert.deepEqual(results.map(r => r.code).sort(), [0, 1]);
   const active = jobIdOf(results.find(r => r.code === 0).stdout);
