@@ -309,7 +309,7 @@ Without a name, `start` prints its usage, the accounts with their email and stat
 `accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, one account at a time (never in parallel, so several Google accounts are not queried from one machine at once):
 
 1. Read the token. If the access token is missing or expires within 120 seconds, warm up by running `agy -p "reply with one word: pong" --output-format json` with the account's environment (60 s timeout), then reread it.
-2. Call `loadCodeAssist` to learn the project and plan type (falling back to the cached `home/.gemini/antigravity-cli/cache/default_project_id.txt`), then `retrieveUserQuotaSummary`. Each request has a 20 s timeout.
+2. Call `loadCodeAssist` to learn the project and plan type (falling back to the cached `home/.gemini/antigravity-cli/cache/default_project_id.txt`), then `retrieveUserQuotaSummary`. Each request has a 20 s timeout. Requests carry the User-Agent agy itself sends, `antigravity/cli/<version> (aidev_client; os_type=<os>; arch=<arch>)`, with the version from `agy --version`: Cloud Code omits the Gemini group from the summary for any other client.
 3. Parse the quota groups into the `gemini` and `other` pools, each with a short (5h) and a weekly window: remaining fraction and reset time.
 4. On `401` the account is warmed up once and retried; if it still fails, the error is recorded and the account is marked `needs login`.
 

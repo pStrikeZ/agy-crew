@@ -358,7 +358,7 @@ agy 运行期间，该账号的持有方式与以 companion 自身 pid 执行 `a
 不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会逐个账号向 Google 的 Cloud Code 服务查询（从不并发，避免同一台机器同时查询多个 Google 账号）：
 
 1. 读取令牌。若访问令牌缺失，或将在 120 秒内过期，就用该账号的环境运行 `agy -p "reply with one word: pong" --output-format json` 预热（超时 60 秒），然后重新读取。
-2. 调用 `loadCodeAssist` 获取项目和套餐类型（失败时使用缓存的 `home/.gemini/antigravity-cli/cache/default_project_id.txt`），再调用 `retrieveUserQuotaSummary`。每个请求的超时为 20 秒。
+2. 调用 `loadCodeAssist` 获取项目和套餐类型（失败时使用缓存的 `home/.gemini/antigravity-cli/cache/default_project_id.txt`），再调用 `retrieveUserQuotaSummary`。每个请求的超时为 20 秒。请求使用与 agy 自身相同的 User-Agent：`antigravity/cli/<版本> (aidev_client; os_type=<系统>; arch=<架构>)`，版本取自 `agy --version`；换成其他客户端标识时，Cloud Code 不会在汇总里返回 Gemini 分组。
 3. 把配额分组解析到 `gemini` 和 `other` 两个池，每个池各有短窗口（5h）和每周窗口，记录剩余比例和重置时间。
 4. 遇到 `401` 时先预热并重试一次；仍然失败就记录错误，并把该账号标记为 `needs login`。
 

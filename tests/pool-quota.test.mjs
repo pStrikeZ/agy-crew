@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { run, sandbox } from './helpers.mjs';
 import { FAMILY, accountHomeOf, readPool, runAsync, seedPool } from './pool-helpers.mjs';
+import { clientUserAgent } from '../companion/pool/quota.mjs';
 
 const SUMMARY = { groups: [
   { displayName: 'Gemini models', buckets: [
@@ -47,7 +48,8 @@ test('quota --refresh stores snapshots, clears recovered cooldowns, and never pr
     const [load, summary] = server.seen;
     assert.equal(load.url, '/v1internal:loadCodeAssist');
     assert.equal(load.auth, 'Bearer fake-access');
-    assert.equal(load.agent, 'antigravity');
+    assert.match(load.agent, /^antigravity\/cli\/1\.1\.13-fake \(aidev_client; os_type=\S+; arch=\S+\)$/, 'the User-Agent names the installed agy, or Cloud Code hides the Gemini group');
+    assert.equal(summary.agent, load.agent);
     assert.equal(load.type, 'application/json');
     assert.deepEqual(load.body, { metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } });
     assert.deepEqual(summary.body, { project: 'proj-9' });
@@ -160,4 +162,11 @@ test('quota --refresh reports progress per account on stderr, and stays quiet fo
     assert.equal(json.code, 0, json.stderr);
     assert.equal(json.stderr, '');
   } finally { await server.close(); }
+});
+
+test('clientUserAgent mirrors agy and falls back to a known version', () => {
+  const fake = (out, status = 0) => () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(out)}); process.exit(${status})`] });
+  assert.equal(clientUserAgent(fake('1.4.9\n'), { platform: 'linux', arch: 'x64' }), 'antigravity/cli/1.4.9 (aidev_client; os_type=linux; arch=amd64)');
+  assert.equal(clientUserAgent(fake('agy version 2.0.1-rc.1\n'), { platform: 'win32', arch: 'arm64' }), 'antigravity/cli/2.0.1-rc.1 (aidev_client; os_type=windows; arch=arm64)');
+  assert.match(clientUserAgent(fake('', 1), { platform: 'darwin', arch: 'arm64' }), /^antigravity\/cli\/\d+\.\d+\.\d+ \(aidev_client; os_type=darwin; arch=arm64\)$/);
 });
