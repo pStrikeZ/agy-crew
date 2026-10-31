@@ -107,6 +107,8 @@ import { randomUUID } from 'node:crypto';
 import { PRODUCT, STATE_DIR_NAME } from './identity.mjs';
 import { cmdInstall, cmdUninstall } from './install.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
+import { follow as followJob } from './inspect.mjs';
+import { runTui } from './tui.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
 import { cmdAccounts, cmdStart, poolSettingsFiles, startHelp } from './accounts.mjs';
@@ -444,7 +446,7 @@ function pidAlive(pid) {
 }
 
 const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts', 'account', 'family', 'home', 'pid', 'retry-at']);
-const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh']);
+const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh', 'no-follow', 'no-color', 'plain', 'no-mouse']);
 
 // Flags dropped in 0.2. They get their own error instead of falling through to
 // "unknown flag", so a 0.1 caller learns what replaced them.
@@ -1620,6 +1622,27 @@ function findJob(id) {
   return job;
 }
 
+/** Live human-readable view of job event streams. On a terminal it is a
+ *  resident full-screen UI: a Jobs overview plus a tab per running job, open
+ *  until the user quits. With --plain, --no-follow or a pipe it is a scrolling
+ *  log of one job that exits with the job's code (see JOB_EXIT_CODES).
+ *  Read-only; quitting or detaching never cancels. */
+async function cmdInspect(opts) {
+  const color = !opts['no-color'] && !process.env.NO_COLOR && !!process.stdout.isTTY;
+  const interactive = process.stdout.isTTY && process.stdin.isTTY && !opts.plain && !opts['no-follow'];
+  if (interactive) {
+    const focus = opts._[0] ? findJob(opts._[0]).id : null;
+    await runTui({ listJobs: () => loadState().jobs || [], getStatus: liveJobStatus, focus, color: true, mouse: !opts['no-mouse'] });
+    return;
+  }
+  const first = findJob(opts._[0]);
+  const read = () => (loadState().jobs || []).find((j) => j.id === first.id);
+  const { status, detached } = await followJob({
+    getJob: () => read() || first, getStatus: liveJobStatus, follow: !opts['no-follow'], color,
+  });
+  process.exitCode = detached ? 0 : (JOB_EXIT_CODES[status] ?? 1);
+}
+
 function readObservation(job) {
   let snapshot = { recent_activities: [], latest_text: null, last_event_at: null, warnings: ['No activity record is available for this job.'] };
   try { snapshot = JSON.parse(fs.readFileSync(job.progress_file, 'utf8')); } catch {}
@@ -2135,6 +2158,11 @@ Run a task in the current repository
 
 Jobs
   status [<job>]   wait <job>   result [<job>]   observe <job>   cancel <job>
+  inspect [<job>]                           resident full-screen window: a Jobs page plus a
+                                            tab per running job; stays open between jobs
+                                            (q quits; jobs keep running; --no-mouse)
+  inspect <job> --plain [--no-follow] [--no-color]
+                                            scrolling log of one job; exits with its code
 
 Accounts
   start <name> [-- <agy args>]              interactive agy as pool account <name>, in this
@@ -2200,6 +2228,8 @@ function main() {
       return cmdRestart(opts);
     case 'observe':
       return renderJobResponse(findJob(opts._[0]), { observeOnly: true });
+    case 'inspect':
+      return cmdInspect(opts);
     case 'status':
       return cmdStatus(opts);
     case 'wait':
