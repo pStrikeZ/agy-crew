@@ -415,7 +415,7 @@ const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
  *  just the finished lines. */
 function refreshProgress(total, { quiet = false, stream = process.stderr } = {}) {
   const noop = () => {};
-  if (quiet || !total) return { stage: noop, done: noop, finish: noop };
+  if (quiet || !total) return { stage: noop, done: noop, skip: noop, finish: noop };
   const tty = !!stream.isTTY;
   let current = null, finished = 0, frame = 0, timer = null;
   const clear = () => { if (tty) stream.write('\r\x1b[K'); };
@@ -443,6 +443,11 @@ function refreshProgress(total, { quiet = false, stream = process.stderr } = {})
       finished++;
       clear();
       stream.write(snapshot.error ? `  ✗ ${name} (${took}): ${snapshot.error}\n` : `  ✓ ${name} (${took})\n`);
+    },
+    skip(name, reason) {
+      finished++;
+      clear();
+      stream.write(`  - ${name}: skipped, ${reason} (keeping its last snapshot)\n`);
     },
     finish() { if (timer) clearInterval(timer); clear(); },
   };

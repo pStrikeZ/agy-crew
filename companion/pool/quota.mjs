@@ -135,14 +135,23 @@ export async function fetchSnapshot(name, { agyCommand, userAgent = clientUserAg
   return { snapshot, authFailed };
 }
 
+/** Borrowers of a live credential loan. Reaps dead loans first, which puts
+ *  their tokens back. */
+const loanBorrowers = () => updatePool((pool) => new Set(pool.loans.map((l) => l.borrower)));
+
 /** Fetch snapshots one account at a time (parallel requests from one machine
  *  for several Google accounts look like abuse), then store them in one locked
  *  update. A pool with quota left clears that account's cooldowns for its
- *  families. progress: { stage(name, stage), done(name, snapshot) }. */
+ *  families. An account whose credential is on loan is skipped and keeps its
+ *  last snapshot: its token file holds the lender's credential, so asking
+ *  Cloud Code would store the lender's quota under the borrower's name.
+ *  progress: { stage(name, stage), done(name, snapshot), skip(name, reason) }. */
 export async function refreshQuotas(names, deps, progress = {}) {
   const fetched = [];
   if (names.length) deps = { ...deps, userAgent: clientUserAgent(deps.agyCommand) };
+  const onLoan = loanBorrowers();
   for (const name of names) {
+    if (onLoan.has(name)) { progress.skip?.(name, 'credential on loan to a running job'); continue; }
     progress.stage?.(name, 'start');
     const result = await fetchSnapshot(name, deps, (stage) => progress.stage?.(name, stage));
     fetched.push([name, result]);
@@ -151,7 +160,8 @@ export async function refreshQuotas(names, deps, progress = {}) {
   updatePool((pool) => {
     for (const [name, { snapshot, authFailed }] of fetched) {
       const account = pool.accounts.find((a) => a.name === name);
-      if (!account) continue;
+      // A loan that began while this account was being asked may have swapped its token in.
+      if (!account || pool.loans.some((l) => l.borrower === name)) continue;
       pool.quota[name] = snapshot;
       if (authFailed) { account.auth_error_at = snapshot.refreshed_at; account.auth_error = snapshot.error; }
       for (const [group, windows] of Object.entries(snapshot.pools)) {

@@ -318,6 +318,8 @@ Progress goes to stderr, so stdout keeps only the table or JSON: a header line, 
 
 A refreshed snapshot with remaining quota above zero for a pool clears that account's cooldowns for the families in that pool. Tokens are never printed. **Network access happens only in `accounts quota --refresh`**, never during dispatch.
 
+An account whose credential is on loan to a running job is skipped (`- <name>: skipped, credential on loan ...` on stderr) and keeps its last snapshot: its token file then holds the lender's credential, so a query would record the lender's quota under the borrower's name.
+
 ### Environment variables
 
 | Variable | Effect |

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { run, sandbox } from './helpers.mjs';
-import { FAMILY, accountHomeOf, readPool, runAsync, seedPool } from './pool-helpers.mjs';
+import { FAMILY, accountHomeOf, readPool, runAsync, seedPool, tokenFileOf, tokenJson, writePool } from './pool-helpers.mjs';
 import { clientUserAgent } from '../companion/pool/quota.mjs';
 
 const SUMMARY = { groups: [
@@ -15,7 +15,7 @@ const SUMMARY = { groups: [
 ] };
 
 /** Local Cloud Code stand-in. `accept(token)` decides between 200 and 401. */
-async function cloudCode(accept, summary = SUMMARY) {
+async function cloudCode(accept, summary = SUMMARY) {   // summary may be a function of the bearer token
   const seen = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -26,7 +26,7 @@ async function cloudCode(accept, summary = SUMMARY) {
       if (!accept(token)) { res.writeHead(401).end('{}'); return; }
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/v1internal:loadCodeAssist') res.end(JSON.stringify({ cloudaicompanionProject: { id: 'proj-9' }, planInfo: { planType: 'pro' } }));
-      else if (req.url === '/v1internal:retrieveUserQuotaSummary') res.end(JSON.stringify(summary));
+      else if (req.url === '/v1internal:retrieveUserQuotaSummary') res.end(JSON.stringify(typeof summary === 'function' ? summary(token) : summary));
       else res.writeHead(404).end('{}');
     });
   });
@@ -68,6 +68,35 @@ test('quota --refresh stores snapshots, clears recovered cooldowns, and never pr
     assert.match(cached.stdout, /gemini +25%  resets in .* +50%  resets in /);
     const listed = run(sb, ['accounts', 'list']);
     assert.match(listed.stdout, /other +90%  resets in /);
+  } finally { await server.close(); }
+});
+
+test('quota --refresh leaves a borrower alone while its token is on loan, so it never reports the lender quota', async () => {
+  const sb = sandbox('pool-quota-loan');
+  const stale = { refreshed_at: '2026-01-01T00:00:00.000Z', plan_type: 'pro', error: null,
+    pools: { gemini: { short: { remaining: 0, reset_at: '2031-01-01T05:00:00.000Z' } } } };
+  seedPool(sb, [{ name: 'a', email: 'a@x' }, { name: 'b', email: 'b@x' }], (p) => { p.quota.a = stale; });
+  // Mid-loan state: a (cooling down) runs on b's credential; its own is in the backup.
+  const backup = path.join(path.dirname(tokenFileOf(sb, 'a')), '.antigravity-oauth-token.agy-crew.loan-backup');
+  fs.renameSync(tokenFileOf(sb, 'a'), backup);
+  const lent = tokenJson('b@x'); lent.token.access_token = 'lender-access';
+  fs.writeFileSync(tokenFileOf(sb, 'a'), JSON.stringify(lent));
+  fs.writeFileSync(tokenFileOf(sb, 'b'), JSON.stringify(lent));
+  const pool = readPool(sb);
+  pool.loans.push({ id: 'L1', borrower: 'a', lender: 'b', pid: process.pid, job_id: null, host_had_token: true, started_at: new Date().toISOString() });
+  pool.leases.push({ id: 'x1', account: 'b', pid: process.pid, role: 'lender', loan_id: 'L1' }, { id: 'x2', account: 'a', pid: process.pid, role: 'run', loan_id: 'L1' });
+  writePool(sb, pool);
+  const lenderQuota = { groups: [{ displayName: 'Gemini models', buckets: [{ id: 'gemini-flash-5h', window: '5h', remainingFraction: 0.9, resetTime: '2031-01-01T05:00:00Z' }] }] };
+  const server = await cloudCode(() => true, (token) => (token === 'lender-access' ? lenderQuota : SUMMARY));
+  try {
+    const r = await runAsync(sb, ['accounts', 'quota', '--refresh'], { AGY_CREW_CLOUDCODE_URL: server.url });
+    assert.equal(r.code, 0, r.stderr);
+    const after = readPool(sb);
+    assert.deepEqual(after.quota.a, stale, 'the borrower keeps its last real snapshot');
+    assert.equal(after.quota.b.pools.gemini.short.remaining, 0.9, 'the lender is still refreshed');
+    assert.equal(server.seen.filter((x) => x.url.endsWith(':loadCodeAssist')).length, 1, 'no request was made for the borrower');
+    assert.match(r.stderr, /- a: skipped, credential on loan/);
+    assert.equal(JSON.parse(fs.readFileSync(tokenFileOf(sb, 'a'), 'utf8')).token.access_token, 'lender-access', 'the loaned token file is untouched');
   } finally { await server.close(); }
 });
 
