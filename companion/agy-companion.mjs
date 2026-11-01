@@ -111,7 +111,7 @@ import { follow as followJob } from './inspect.mjs';
 import { runTui } from './tui.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
-import { cmdAccounts, cmdStart, poolSettingsFiles, startHelp } from './accounts.mjs';
+import { cmdAccounts, cmdStart, poolSettingsFiles } from './accounts.mjs';
 import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
 import { classifyFailureText, isCooldownReason, modelFamily } from './pool/results.mjs';
 import { loadPool, updatePool, poolExists } from './pool/state.mjs';
@@ -2165,8 +2165,12 @@ Jobs
                                             scrolling log of one job; exits with its code
 
 Accounts
-  start <name> [-- <agy args>]              interactive agy as pool account <name>, in this
-                                            directory; the account is held until agy exits
+  start [<name>] [--model <id>] [-- <agy args>]
+                                            interactive agy in this directory. Without <name>:
+                                            in the shared home, whose conversations survive
+                                            account switches, with the credential of an idle
+                                            account that has quota for --model. With <name>:
+                                            as that account. The account is held until agy exits
   accounts list [--json]                    accounts, state, quota and cooldowns
   accounts quota [<name>...] [--refresh]    quota snapshots (--refresh asks Google)
   accounts login <name>                     browser sign-in (run it yourself, in a terminal)
@@ -2206,16 +2210,7 @@ function main() {
   if (['help', '--help', '-h'].includes(cmd)) return void process.stdout.write(HELP);
   if (['version', '--version', '-v'].includes(cmd)) return cmdVersion();
   if (cmd === 'start') {
-    // Everything after `--` goes to agy untouched, so it is never parsed as companion flags.
-    const split = rest.indexOf('--');
-    const own = split < 0 ? rest : rest.slice(0, split);
-    if (!own.length) {
-      process.stderr.write(startHelp() + '\n');
-      process.exitCode = 1;
-      return;
-    }
-    if (own.length !== 1) die('usage: start <name> [-- <agy args>...]');
-    return cmdStart(own[0], split < 0 ? [] : rest.slice(split + 1), { agyCommand })
+    return cmdStart(rest, { agyCommand, liveSettings: AGY_SETTINGS, defaultModel: DEFAULTS.model.staffer })
       .then((code) => { process.exitCode = code; });
   }
   const opts = parseFlags(rest, { taskCommand: MODES.includes(cmd) || cmd === 'continue' });

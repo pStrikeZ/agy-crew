@@ -12,10 +12,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { PRODUCT } from './identity.mjs';
 import { accountEnv } from './pool/env.mjs';
-import { accountDir, accountHome, accountSettingsPath, loadPool, poolExists, poolPaths, tokenPath,
-  updatePool, validateAccountName, PoolError } from './pool/state.mjs';
+import { accountDir, accountHome, accountSettingsPath, beginSharedFiles, loadPool, poolExists, poolPaths, settleShared,
+  sharedHome, tokenPath, updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
-import { activeCooldown, exhaustedSnapshot, findAccount, holdOn } from './pool/select.mjs';
+import { activeCooldown, chooseLender, exhaustedSnapshot, findAccount, holdOn } from './pool/select.mjs';
+import { modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { refreshQuotas } from './pool/quota.mjs';
 import { formatAgo, renderCooldowns, renderQuotaTable, renderTable } from './pool/format.mjs';
@@ -45,7 +46,8 @@ function accountState(pool, account, now) {
   if (account.auth_error_at || !fs.existsSync(tokenPath(accountHome(account.name)))) return 'needs login';
   const cooling = Object.entries(pool.cooldowns).filter(([key, c]) => key.startsWith(`${account.name}|`) && Date.parse(c.retry_at) > now);
   if (cooling.length) return cooling.map(([key, c]) => `cooling ${key.split('|')[1]} until ${c.retry_at}`).join('; ');
-  if (holdOn(pool, account.name)) return 'held';
+  const hold = holdOn(pool, account.name);
+  if (hold) return hold.shared ? 'shared' : 'held';
   const n = pool.leases.filter((l) => l.account === account.name).length;
   return n ? `busy ${n}` : 'ready';
 }
@@ -340,30 +342,86 @@ function cmdHold(opts) {
   throw new PoolError(HOLD_USAGE);
 }
 
-const START_USAGE = 'usage: start <name> [-- <agy args>...]';
+const START_USAGE = 'usage: start [<name>] [--model <id>] [-- <agy args>...]';
 
-/** What `start` without a name prints: usage, the accounts to choose from and an example. */
+/** What `start --help` prints: usage, the accounts and examples. */
 export function startHelp() {
   const pool = currentPool();
   const now = Date.now();
-  const lines = [`usage: ${PRODUCT} start <name> [-- <agy args>...]`,
-    'Runs agy interactively in this directory as pool account <name>, holding the account until agy exits.',
-    'Arguments after -- go to agy unchanged.', ''];
+  const lines = [`usage: ${PRODUCT} start [<name>] [--model <id>] [-- <agy args>...]`,
+    'Runs agy interactively in this directory, holding the account it uses until agy exits.',
+    `Without <name> it runs in the shared home (${sharedHome()}), which belongs to no account:`,
+    'its conversations stay there whichever account lends the credential, so /resume finds them.',
+    'An idle account with quota for --model (default: the family of the default model) lends it.',
+    'With <name> it runs as that account, in the account\'s own home.',
+    'Arguments after -- go to agy unchanged; --model is passed on to agy too.', ''];
   if (!pool.accounts.length) return [...lines, `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`.`].join('\n');
   const rows = pool.accounts.map((a) => ({ name: a.name, email: a.email, state: stateLabel(accountState(pool, a, now)) }));
   lines.push(...renderTable(['ACCOUNT', 'EMAIL', 'STATE'], rows.map((r) => [r.name, r.email || 'unknown', r.state])));
+  lines.push('', `example: ${PRODUCT} start --model gemini-3.1-pro-high`);
   const ready = rows.find((r) => r.state === 'ready' || r.state === 'cooling');
-  if (ready) lines.push('', `example: ${PRODUCT} start ${ready.name}`);
+  if (ready) lines.push(`example: ${PRODUCT} start ${ready.name}`);
   return lines.join('\n');
+}
+
+/** The value of --model in agy's own arguments, if any. */
+function agyModelArg(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--model') return args[i + 1] ?? null;
+    if (args[i].startsWith('--model=')) return args[i].slice('--model='.length);
+  }
+  return null;
+}
+
+/** `start` arguments: [<name>] [--model <id>] [-- <agy args>...]. Everything
+ *  after `--` goes to agy untouched, so it is never parsed here. */
+export function parseStartArgs(rest) {
+  const split = rest.indexOf('--');
+  const own = split < 0 ? rest : rest.slice(0, split);
+  let agyArgs = split < 0 ? [] : rest.slice(split + 1);
+  let name = null, model = null, help = false;
+  for (let i = 0; i < own.length; i++) {
+    const a = own[i];
+    if (a === '--help' || a === '-h') help = true;
+    else if (a === '--model') {
+      model = own[++i];
+      if (!model || model.startsWith('-')) throw new PoolError('flag --model needs a value');
+    } else if (a.startsWith('--model=')) model = a.slice('--model='.length);
+    else if (a.startsWith('-')) throw new PoolError(`unknown flag ${a} (${START_USAGE}; agy's own flags go after --)`);
+    else if (name) throw new PoolError(START_USAGE);
+    else name = a;
+  }
+  if (model) {
+    if (agyModelArg(agyArgs)) throw new PoolError('give --model once: either before -- or in agy\'s arguments');
+    agyArgs = ['--model', model, ...agyArgs];
+  }
+  return { name, model: model || agyModelArg(agyArgs), agyArgs, help };
+}
+
+/** `start`: resolves to agy's exit code.
+ *  deps: { agyCommand, liveSettings, defaultModel }. */
+export async function cmdStart(rest, deps) {
+  const { name, model, agyArgs, help } = parseStartArgs(rest);
+  if (help) { out(startHelp()); return 0; }
+  const family = modelFamily(model || deps.defaultModel);
+  return name ? startAccount(name, family, agyArgs, deps) : startShared(family, agyArgs, deps);
+}
+
+const holdRecord = (account, extra = {}) =>
+  ({ id: randomUUID().slice(0, 8), account, role: 'hold', pid: process.pid, job_id: null, started_at: new Date().toISOString(), ...extra });
+
+/** Why an account has no quota for this family now, or null. */
+function noQuota(pool, name, family, now) {
+  const cooling = activeCooldown(pool, name, family, now);
+  const exhausted = exhaustedSnapshot(pool, name, family, now);
+  return cooling || exhausted ? { family, retry_at: cooling?.retry_at || exhausted.reset_at } : null;
 }
 
 /** Run agy interactively in this terminal as pool account <name>, in the
  *  current directory. The account is held for the whole session (the same
  *  lease as `accounts hold`, owned by this process), so background runs stay
- *  off it and its token is never swapped by a loan meanwhile. Resolves to
- *  agy's exit code. */
-export async function cmdStart(name, agyArgs, { agyCommand }) {
-  if (!name || name.startsWith('-')) throw new PoolError(START_USAGE);
+ *  off it and its token is never swapped by a loan meanwhile. */
+async function startAccount(name, family, agyArgs, deps) {
   const outcome = updatePool((pool) => {
     const account = findAccount(pool, name);
     if (account?.disabled) return { refused: { message: `account ${name} is disabled (accounts enable ${name})` } };
@@ -372,18 +430,70 @@ export async function cmdStart(name, agyArgs, { agyCommand }) {
     }
     const refused = holdRefusal(pool, name, null, process.pid, Date.now());
     if (refused) return { refused };
-    const hold = { id: randomUUID().slice(0, 8), account: name, role: 'hold', pid: process.pid, job_id: null, started_at: new Date().toISOString() };
+    const hold = holdRecord(name);
     pool.leases.push(hold);
     account.last_used_at = hold.started_at;
-    const now = Date.now();
-    const cooling = Object.entries(pool.cooldowns).filter(([k, c]) => k.startsWith(`${name}|`) && Date.parse(c.retry_at) > now)
-      .map(([k, c]) => ({ family: k.split('|')[1], retry_at: c.retry_at }));
-    return { hold, cooling };
+    return { hold, cooling: noQuota(pool, name, family, Date.now()) };
   });
   if (outcome.refused) throw new PoolError(outcome.refused.message);
   const { hold, cooling } = outcome;
-  for (const c of cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${c.family} quota until ${c.retry_at}\n`);
-  const release = () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); });
+  if (cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${cooling.family} quota until ${cooling.retry_at}\n`);
+  return runInteractive(accountHome(name), agyArgs, deps,
+    () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); }));
+}
+
+/** Why no account can lend the shared session a credential. */
+function noLenderMessage(pool, family, now) {
+  const rows = pool.accounts.map((a) => {
+    const q = noQuota(pool, a.name, family, now);
+    const state = q ? `no ${family} quota until ${q.retry_at}` : accountState(pool, a, now);
+    return `  ${a.name}: ${state}`;
+  });
+  return `no pool account is idle with ${family} quota to lend the shared session a credential:\n${rows.join('\n')}\n` +
+    'Wait for a busy account, pass --model with another family, or run `start <name>` in that account\'s own home.';
+}
+
+/** Run agy interactively in the shared HOME with the credential of an idle
+ *  account that has quota for the family. The lender is held like `start
+ *  <name>` holds its account. A second `start` while a shared session runs
+ *  joins it on the same credential, since the HOME has room for only one; the
+ *  credential goes back when the last of them exits. */
+async function startShared(family, agyArgs, deps) {
+  const outcome = updatePool((pool) => {
+    if (!pool.accounts.length) return { refused: { message: `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`` } };
+    const now = Date.now();
+    const joined = !!pool.shared;
+    const name = joined ? pool.shared.account : chooseLender(pool, { family, now });
+    if (!name) return { refused: { message: noLenderMessage(pool, family, now) } };
+    const account = findAccount(pool, name);
+    if (!joined) {
+      beginSharedFiles(name);
+      pool.shared = { account: name, email: account.email || null, started_at: new Date(now).toISOString() };
+    }
+    const hold = holdRecord(name, { shared: true });
+    pool.leases.push(hold);
+    account.last_used_at = hold.started_at;
+    return { hold, name, email: account.email, joined, cooling: joined ? noQuota(pool, name, family, now) : null };
+  });
+  if (outcome.refused) throw new PoolError(outcome.refused.message);
+  const { hold, name, email, joined, cooling } = outcome;
+  const home = sharedHome();
+  seedSettings(home, deps.liveSettings);
+  const who = `account ${name}${email ? ` <${email}>` : ''}`;
+  process.stderr.write(joined
+    ? `${PRODUCT}: joining the running shared session, which uses ${who}\n`
+    : `${PRODUCT}: shared home, credential from ${who}\n`);
+  if (cooling) {
+    process.stderr.write(`${PRODUCT}: note: ${name} has no ${cooling.family} quota until ${cooling.retry_at}; ` +
+      'a shared session keeps one credential, so exit every shared agy to switch accounts\n');
+  }
+  return runInteractive(home, agyArgs, deps,
+    () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); settleShared(pool); }));
+}
+
+/** agy with the terminal attached, in the current directory; release() runs
+ *  when it exits. Resolves to agy's exit code. */
+async function runInteractive(home, agyArgs, { agyCommand }, release) {
   // agy owns the terminal: Ctrl+C reaches it through the process group, so this
   // process only waits; other signals are passed on.
   const ignore = () => {};
@@ -393,7 +503,7 @@ export async function cmdStart(name, agyArgs, { agyCommand }) {
   for (const s of ['SIGTERM', 'SIGHUP']) process.on(s, forward);
   try {
     const agy = agyCommand(agyArgs);
-    child = spawn(agy.cmd, agy.args, { cwd: process.cwd(), env: accountEnv(accountHome(name)), stdio: 'inherit', windowsHide: true });
+    child = spawn(agy.cmd, agy.args, { cwd: process.cwd(), env: accountEnv(home), stdio: 'inherit', windowsHide: true });
     return await new Promise((resolve, reject) => {
       child.on('error', (error) => reject(new PoolError(`failed to launch agy: ${error.message}`)));
       child.on('exit', (code, signal) => resolve(code ?? (signal ? 128 + (os.constants.signals[signal] || 0) : 1)));
@@ -477,7 +587,9 @@ async function cmdQuota(opts, deps) {
 
 /** settings.json of every pool account, for `setup --apply`. */
 export function poolSettingsFiles() {
-  return loadPool().accounts.map((a) => ({ name: a.name, file: accountSettingsPath(accountHome(a.name)) }));
+  const files = loadPool().accounts.map((a) => ({ name: a.name, file: accountSettingsPath(accountHome(a.name)) }));
+  if (fs.existsSync(sharedHome())) files.push({ name: 'shared home', file: accountSettingsPath(sharedHome()) });
+  return files;
 }
 
 /** deps: { agyCommand, liveSettings } injected by the companion (avoids an import cycle). */

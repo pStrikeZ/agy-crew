@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PRODUCT, globalHome } from '../identity.mjs';
 import { withStateLock, replaceFile } from '../state-lock.mjs';
+import { readToken } from './token.mjs';
 
 export const POOL_SCHEMA = 1;
 export const RESERVED_NAMES = ['live', 'auto'];
@@ -27,8 +28,13 @@ export const accountDir = (name) => path.join(poolPaths().accountsDir, name);
 export const accountHome = (name) => path.join(accountDir(name), 'home');
 export const tokenPath = (home) => path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
 export const accountSettingsPath = (home) => path.join(home, '.gemini', 'antigravity-cli', 'settings.json');
+/** The Cloud Code project agy last used, which belongs to the signed-in account. */
+export const projectCachePath = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
+/** The HOME of `start` without an account name: it belongs to no account, so
+ *  its conversations survive switching credentials. */
+export const sharedHome = () => path.join(poolPaths().root, 'shared', 'home');
 
-export const emptyPool = () => ({ schema: POOL_SCHEMA, accounts: [], cooldowns: {}, leases: [], conversations: {}, loans: [], quota: {} });
+export const emptyPool = () => ({ schema: POOL_SCHEMA, accounts: [], cooldowns: {}, leases: [], conversations: {}, loans: [], quota: {}, shared: null });
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 
@@ -77,6 +83,33 @@ export function restoreLoanFiles(loan) {
   if (loan.host_had_token && fs.existsSync(backup)) replaceFile(backup, tb);
 }
 
+/** The files a shared session takes from its account: the credential and the
+ *  account's Cloud Code project. Everything else in the shared HOME stays. */
+const SHARED_FILES = [tokenPath, projectCachePath];
+
+/** Put an account's credential into the shared HOME. Called inside updatePool. */
+export function beginSharedFiles(account) {
+  for (const file of SHARED_FILES) {
+    const from = file(accountHome(account)), to = file(sharedHome());
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (fs.existsSync(from)) copyAtomic(from, to); else fs.rmSync(to, { force: true });
+  }
+}
+
+/** End the shared session once its last holder is gone: the credential goes
+ *  back to its account (agy may have refreshed it), unless it is no longer that
+ *  account's (someone signed in to another one inside agy), and the shared HOME
+ *  is left without a credential. Idempotent. */
+export function settleShared(pool) {
+  if (!pool.shared || pool.leases.some((l) => l.shared)) return;
+  const { account, email } = pool.shared;
+  const ts = tokenPath(sharedHome()), ta = tokenPath(accountHome(account));
+  const token = readToken(sharedHome());
+  if (token && (!email || token.email === email) && fs.existsSync(path.dirname(ta))) copyAtomic(ts, ta);
+  fs.rmSync(ts, { force: true });
+  pool.shared = null;
+}
+
 /** Drop what belongs to dead processes. Runs at the start of every locked
  *  update so a crashed run never keeps an account busy or a token swapped. */
 export function reap(pool, now = Date.now()) {
@@ -88,6 +121,7 @@ export function reap(pool, now = Date.now()) {
     pool.leases = pool.leases.filter((l) => l.loan_id !== loan.id);
   }
   pool.loans = keep;
+  try { settleShared(pool); } catch { /* retry on the next update */ }
   for (const [key, c] of Object.entries(pool.cooldowns)) if (Date.parse(c.retry_at) <= now) delete pool.cooldowns[key];
   return pool;
 }

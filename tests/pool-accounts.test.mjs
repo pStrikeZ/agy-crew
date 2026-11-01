@@ -375,11 +375,13 @@ test('start refuses unknown, busy, disabled and signed-out accounts without laun
     assert.equal(r.code, 1, name);
     assert.match(r.stderr, why, name);
   }
-  const help = run(sb, ['start']);
-  assert.equal(help.code, 1);
-  assert.match(help.stderr, /usage: agy-crew start <name>/);
-  assert.match(help.stderr, /busy +busy@example\.com +busy 1/, 'start without a name lists the accounts');
-  assert.match(run(sb, ['start', 'a', 'b']).stderr, /usage: start <name>/);
+  const help = run(sb, ['start', '--help']);
+  assert.equal(help.code, 0);
+  assert.match(help.stdout, /usage: agy-crew start \[<name>\] \[--model <id>\]/);
+  assert.match(help.stdout, /busy +busy@example\.com +busy 1/, 'start --help lists the accounts');
+  assert.match(run(sb, ['start', 'a', 'b']).stderr, /usage: start \[<name>\]/);
+  assert.match(run(sb, ['start', '--json']).stderr, /unknown flag --json .*agy's own flags go after --/);
+  assert.match(run(sb, ['start', 'a', '--model', 'x', '--', '--model', 'y']).stderr, /give --model once/);
   assert.deepEqual(agyCalls(sb), []);
   assert.deepEqual(readPool(sb).leases.map((l) => l.id), ['l']);
 });
@@ -396,9 +398,127 @@ test('start notes a cooldown but still launches', () => {
 
 test('start without a name on an empty pool says how to add an account', () => {
   const sb = sandbox('pool-start-empty');
+  assert.match(run(sb, ['start', '--help']).stdout, /No pool accounts yet\. Add one with `agy-crew accounts login <name>`/);
   const r = run(sb, ['start']);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /No pool accounts yet\. Add one with `agy-crew accounts login <name>`/);
+});
+
+const sharedHomeOf = (sb) => path.join(globalHomeOf(sb), 'shared', 'home');
+const sharedToken = (sb) => path.join(sharedHomeOf(sb), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+const projectCacheOf = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
+
+async function leasesWhileRunning(sb, n = 1) {
+  let leases = [];
+  for (let i = 0; i < 200 && leases.length < n; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    try { leases = readPool(sb).leases; } catch {}
+  }
+  return leases;
+}
+
+test('start without a name runs in the shared home with an idle account\'s credential and gives it back', async () => {
+  const sb = sandbox('pool-start-shared');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }, { name: 'c', email: 'c@example.com' }],
+    (p) => {
+      p.cooldowns[`a|gemini-3.1-pro`] = { retry_at: later };
+      p.leases.push({ id: 'busy', account: 'b', pid: process.pid, role: 'run' });
+    });
+  fs.mkdirSync(path.dirname(projectCacheOf(accountHomeOf(sb, 'c'))), { recursive: true });
+  fs.writeFileSync(projectCacheOf(accountHomeOf(sb, 'c')), 'project-of-c');
+  fs.mkdirSync(path.dirname(projectCacheOf(sharedHomeOf(sb))), { recursive: true });
+  fs.writeFileSync(projectCacheOf(sharedHomeOf(sb)), 'project-of-someone-else');
+  const envFile = path.join(sb.root, 'env.jsonl');
+  const cwdFile = path.join(sb.root, 'cwd.txt');
+  const running = runAsync(sb, ['start', '--model', 'gemini-3.1-pro-high', '--', '--continue'],
+    { FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_CWD_FILE: cwdFile, FAKE_AGY_SLEEP_MS: '1500', FAKE_AGY_NEW_ACCESS_TOKEN: 'refreshed' });
+  const leases = await leasesWhileRunning(sb, 2);
+  assert.deepEqual(leases.map((l) => [l.account, l.role, !!l.shared]), [['b', 'run', false], ['c', 'hold', true]],
+    'a is out of pro quota and b is busy, so c lends and is held');
+  assert.equal(readPool(sb).shared.account, 'c');
+  assert.equal(list(sb).accounts.find((x) => x.name === 'c').state, 'shared');
+  const r = await running;
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, /shared home, credential from account c <c@example\.com>/);
+  assert.deepEqual(agyCalls(sb), [['--model', 'gemini-3.1-pro-high', '--continue']], '--model is passed on to agy');
+  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]), [[sharedHomeOf(sb), 'c@example.com']]);
+  assert.equal(fs.readFileSync(cwdFile, 'utf8'), sb.repo);
+  assert.equal(fs.readFileSync(projectCacheOf(sharedHomeOf(sb)), 'utf8'), 'project-of-c', 'the account\'s Cloud Code project comes along');
+  const pool = readPool(sb);
+  assert.deepEqual(pool.leases.map((l) => l.id), ['busy'], 'the hold ends with agy');
+  assert.equal(pool.shared, null);
+  assert.equal(fs.existsSync(sharedToken(sb)), false, 'the shared home keeps no credential between sessions');
+  assert.equal(JSON.parse(fs.readFileSync(tokenFileOf(sb, 'c'), 'utf8')).token.access_token, 'refreshed', 'the refreshed token goes back to c');
+  assert.equal(emailOfToken(tokenFileOf(sb, 'c')), 'c@example.com');
+});
+
+test('a second shared start joins the running session on the same credential', async () => {
+  const sb = sandbox('pool-start-shared-join');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }]);
+  const envFile = path.join(sb.root, 'env.jsonl');
+  const first = runAsync(sb, ['start'], { FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_SLEEP_MS: '2500' });
+  await leasesWhileRunning(sb, 1);
+  const second = runAsync(sb, ['start'], { FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_SLEEP_MS: '300' });
+  const r2 = await second;
+  assert.equal(r2.code, 0, r2.stderr);
+  assert.match(r2.stderr, /joining the running shared session, which uses account a/);
+  assert.ok(fs.existsSync(sharedToken(sb)), 'the credential stays while the first session runs');
+  assert.deepEqual(readPool(sb).leases.map((l) => [l.account, !!l.shared]), [['a', true]]);
+  const r1 = await first;
+  assert.equal(r1.code, 0, r1.stderr);
+  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]),
+    [[sharedHomeOf(sb), 'a@example.com'], [sharedHomeOf(sb), 'a@example.com']]);
+  assert.equal(readPool(sb).shared, null);
+  assert.equal(fs.existsSync(sharedToken(sb)), false);
+});
+
+test('shared start is refused without launching agy when no account can lend', () => {
+  const sb = sandbox('pool-start-shared-refused');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }, { name: 'off', email: 'off@example.com', disabled: true }],
+    (p) => {
+      p.cooldowns[`a|${FAMILY}`] = { retry_at: later };
+      p.leases.push({ id: 'busy', account: 'b', pid: process.pid, role: 'run' });
+    });
+  const r = run(sb, ['start']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, new RegExp(`no pool account is idle with ${FAMILY} quota`));
+  assert.match(r.stderr, new RegExp(`a: no ${FAMILY} quota until ${later}`));
+  assert.match(r.stderr, /b: busy 1/);
+  assert.match(r.stderr, /off: disabled/);
+  assert.deepEqual(agyCalls(sb), []);
+  assert.equal(readPool(sb).shared, null);
+  assert.equal(run(sb, ['start', '--model', 'gemini-3.1-pro-high']).code, 0, 'another family still has a lender');
+});
+
+test('a shared session whose process died gives the credential back on the next pool update', async () => {
+  const sb = sandbox('pool-start-shared-reap');
+  const pid = await deadPid();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => {
+    p.shared = { account: 'a', email: 'a@example.com', started_at: new Date().toISOString() };
+    p.leases.push({ id: 'h', account: 'a', pid, role: 'hold', shared: true });
+  });
+  fs.mkdirSync(path.dirname(sharedToken(sb)), { recursive: true });
+  fs.writeFileSync(sharedToken(sb), JSON.stringify(tokenJson('a@example.com', { refreshed_by_run: true })));
+  assert.equal(list(sb).accounts[0].state, 'ready');
+  assert.equal(readPool(sb).shared, null);
+  assert.equal(fs.existsSync(sharedToken(sb)), false);
+  assert.equal(JSON.parse(fs.readFileSync(tokenFileOf(sb, 'a'), 'utf8')).refreshed_by_run, true);
+});
+
+test('a shared credential that no longer belongs to its account is not written back', async () => {
+  const sb = sandbox('pool-start-shared-foreign');
+  const pid = await deadPid();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => {
+    p.shared = { account: 'a', email: 'a@example.com', started_at: new Date().toISOString() };
+    p.leases.push({ id: 'h', account: 'a', pid, role: 'hold', shared: true });
+  });
+  fs.mkdirSync(path.dirname(sharedToken(sb)), { recursive: true });
+  fs.writeFileSync(sharedToken(sb), JSON.stringify(tokenJson('stranger@example.com')));
+  list(sb);
+  assert.equal(emailOfToken(tokenFileOf(sb, 'a')), 'a@example.com');
+  assert.equal(fs.existsSync(sharedToken(sb)), false);
 });
 
 test('help and version', () => {
@@ -411,7 +531,7 @@ test('help and version', () => {
     assert.equal(r.code, 0, arg);
     assert.equal(r.stdout, bare.stderr, arg);
   }
-  assert.match(bare.stderr, /start <name> \[-- <agy args>\]/);
+  assert.match(bare.stderr, /start \[<name>\] \[--model <id>\] \[-- <agy args>\]/);
   const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   for (const arg of ['version', '--version', '-v']) {
     const r = run(sb, [arg]);

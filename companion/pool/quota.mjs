@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { accountEnv } from './env.mjs';
-import { accountHome, updatePool } from './state.mjs';
+import { accountHome, projectCachePath as projectCache, updatePool } from './state.mjs';
 import { quotaPool } from './results.mjs';
 import { readToken } from './token.mjs';
 
@@ -26,7 +26,6 @@ export function clientUserAgent(agyCommand, { platform = process.platform, arch 
   } catch { /* fall back below */ }
   return `antigravity/cli/${version || FALLBACK_AGY_VERSION} (aidev_client; os_type=${AGY_OS[platform] || platform}; arch=${AGY_ARCH[arch] || arch})`;
 }
-const projectCache = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
 
 /** Run agy once so it refreshes the file-backed token itself. Async, so the
  *  progress line keeps drawing meanwhile. */
