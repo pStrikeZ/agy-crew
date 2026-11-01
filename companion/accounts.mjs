@@ -350,10 +350,11 @@ export function startHelp() {
   const now = Date.now();
   const lines = [`usage: ${PRODUCT} start [<name>] [--model <id>] [-- <agy args>...]`,
     'Runs agy interactively in this directory, holding the account it uses until agy exits.',
-    `Without <name> it runs in the shared home (${sharedHome()}), which belongs to no account:`,
+    `agy runs in the shared home (${sharedHome()}), which belongs to no account:`,
     'its conversations stay there whichever account lends the credential, so /resume finds them.',
-    'An idle account with quota for --model (default: the family of the default model) lends it.',
-    'With <name> it runs as that account, in the account\'s own home.',
+    '<name> lends its credential; without it, an idle account with quota for --model',
+    '(default: the family of the default model) does. A start while a shared session runs',
+    'joins it on the same credential.',
     'Arguments after -- go to agy unchanged; --model is passed on to agy too.', ''];
   if (!pool.accounts.length) return [...lines, `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`.`].join('\n');
   const rows = pool.accounts.map((a) => ({ name: a.name, email: a.email, state: stateLabel(accountState(pool, a, now)) }));
@@ -404,7 +405,7 @@ export async function cmdStart(rest, deps) {
   const { name, model, agyArgs, help } = parseStartArgs(rest);
   if (help) { out(startHelp()); return 0; }
   const family = modelFamily(model || deps.defaultModel);
-  return name ? startAccount(name, family, agyArgs, deps) : startShared(family, agyArgs, deps);
+  return startShared(name, family, agyArgs, deps);
 }
 
 const holdRecord = (account, extra = {}) =>
@@ -417,29 +418,14 @@ function noQuota(pool, name, family, now) {
   return cooling || exhausted ? { family, retry_at: cooling?.retry_at || exhausted.reset_at } : null;
 }
 
-/** Run agy interactively in this terminal as pool account <name>, in the
- *  current directory. The account is held for the whole session (the same
- *  lease as `accounts hold`, owned by this process), so background runs stay
- *  off it and its token is never swapped by a loan meanwhile. */
-async function startAccount(name, family, agyArgs, deps) {
-  const outcome = updatePool((pool) => {
-    const account = findAccount(pool, name);
-    if (account?.disabled) return { refused: { message: `account ${name} is disabled (accounts enable ${name})` } };
-    if (account && (account.auth_error_at || !fs.existsSync(tokenPath(accountHome(name))))) {
-      return { refused: { message: `account ${name} needs login (accounts login ${name})` } };
-    }
-    const refused = holdRefusal(pool, name, null, process.pid, Date.now());
-    if (refused) return { refused };
-    const hold = holdRecord(name);
-    pool.leases.push(hold);
-    account.last_used_at = hold.started_at;
-    return { hold, cooling: noQuota(pool, name, family, Date.now()) };
-  });
-  if (outcome.refused) throw new PoolError(outcome.refused.message);
-  const { hold, cooling } = outcome;
-  if (cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${cooling.family} quota until ${cooling.retry_at}\n`);
-  return runInteractive(accountHome(name), agyArgs, deps,
-    () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); }));
+/** Why a named start cannot have this account's credential, or null. */
+function namedRefusal(pool, name) {
+  const account = findAccount(pool, name);
+  if (account?.disabled) return `account ${name} is disabled (accounts enable ${name})`;
+  if (account && (account.auth_error_at || !fs.existsSync(tokenPath(accountHome(name))))) {
+    return `account ${name} needs login (accounts login ${name})`;
+  }
+  return holdRefusal(pool, name, null, process.pid, Date.now())?.message || null;
 }
 
 /** Why no account can lend the shared session a credential. */
@@ -450,21 +436,50 @@ function noLenderMessage(pool, family, now) {
     return `  ${a.name}: ${state}`;
   });
   return `no pool account is idle with ${family} quota to lend the shared session a credential:\n${rows.join('\n')}\n` +
-    'Wait for a busy account, pass --model with another family, or run `start <name>` in that account\'s own home.';
+    'Wait for a busy account, pass --model with another family, or name an account with `start <name>`.';
 }
 
-/** Run agy interactively in the shared HOME with the credential of an idle
- *  account that has quota for the family. The lender is held like `start
- *  <name>` holds its account. A second `start` while a shared session runs
- *  joins it on the same credential, since the HOME has room for only one; the
- *  credential goes back when the last of them exits. */
-async function startShared(family, agyArgs, deps) {
+const sharedPids = (pool) => pool.leases.filter((l) => l.shared).map((l) => l.pid).join(', ');
+
+/** Why a start cannot join the running shared session: it wants another
+ *  account, or the session's credential has no quota for the family. The
+ *  shared HOME holds one credential at a time. */
+function joinRefusal(pool, wanted, cooling) {
+  const running = `the running shared session (agy-crew pid ${sharedPids(pool)}) uses account ${pool.shared.account}`;
+  const why = wanted ? '' : `, which has no ${cooling.family} quota until ${cooling.retry_at}`;
+  return `${running}${why}.\nThe shared home holds one credential at a time: exit every shared agy, then start again` +
+    (wanted ? ` to use ${wanted}.` : ' so an account with quota is picked.');
+}
+
+/** Run agy interactively in this directory in the shared HOME, which belongs
+ *  to no account, so its conversations stay put whichever account lends the
+ *  credential. The lender is <name> when given, otherwise an idle account with
+ *  quota for the family; it is held for the whole session (the same lease as
+ *  `accounts hold`, owned by this process), so background runs stay off it and
+ *  its token is never swapped by a loan meanwhile. A start while a shared
+ *  session runs joins it on the same credential, since the HOME has room for
+ *  only one; the credential goes back when the last of them exits. */
+async function startShared(wanted, family, agyArgs, deps) {
   const outcome = updatePool((pool) => {
-    if (!pool.accounts.length) return { refused: { message: `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`` } };
+    if (!pool.accounts.length) return { refused: `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`` };
     const now = Date.now();
     const joined = !!pool.shared;
-    const name = joined ? pool.shared.account : chooseLender(pool, { family, now });
-    if (!name) return { refused: { message: noLenderMessage(pool, family, now) } };
+    let name;
+    if (joined) {
+      name = pool.shared.account;
+      if (wanted && wanted !== name) {
+        return { refused: findAccount(pool, wanted) ? joinRefusal(pool, wanted) : `unknown account "${wanted}" (see \`accounts list\`)` };
+      }
+      const cooling = wanted ? null : noQuota(pool, name, family, now);
+      if (cooling) return { refused: joinRefusal(pool, null, cooling) };
+    } else if (wanted) {
+      const refused = namedRefusal(pool, wanted);
+      if (refused) return { refused };
+      name = wanted;
+    } else {
+      name = chooseLender(pool, { family, now });
+      if (!name) return { refused: noLenderMessage(pool, family, now) };
+    }
     const account = findAccount(pool, name);
     if (!joined) {
       beginSharedFiles(name);
@@ -473,9 +488,9 @@ async function startShared(family, agyArgs, deps) {
     const hold = holdRecord(name, { shared: true });
     pool.leases.push(hold);
     account.last_used_at = hold.started_at;
-    return { hold, name, email: account.email, joined, cooling: joined ? noQuota(pool, name, family, now) : null };
+    return { hold, name, email: account.email, joined, cooling: wanted ? noQuota(pool, name, family, now) : null };
   });
-  if (outcome.refused) throw new PoolError(outcome.refused.message);
+  if (outcome.refused) throw new PoolError(outcome.refused);
   const { hold, name, email, joined, cooling } = outcome;
   const home = sharedHome();
   seedSettings(home, deps.liveSettings);
@@ -483,10 +498,7 @@ async function startShared(family, agyArgs, deps) {
   process.stderr.write(joined
     ? `${PRODUCT}: joining the running shared session, which uses ${who}\n`
     : `${PRODUCT}: shared home, credential from ${who}\n`);
-  if (cooling) {
-    process.stderr.write(`${PRODUCT}: note: ${name} has no ${cooling.family} quota until ${cooling.retry_at}; ` +
-      'a shared session keeps one credential, so exit every shared agy to switch accounts\n');
-  }
+  if (cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${cooling.family} quota until ${cooling.retry_at}\n`);
   return runInteractive(home, agyArgs, deps,
     () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); settleShared(pool); }));
 }

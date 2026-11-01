@@ -2166,11 +2166,11 @@ Jobs
 
 Accounts
   start [<name>] [--model <id>] [-- <agy args>]
-                                            interactive agy in this directory. Without <name>:
-                                            in the shared home, whose conversations survive
-                                            account switches, with the credential of an idle
-                                            account that has quota for --model. With <name>:
-                                            as that account. The account is held until agy exits
+                                            interactive agy in this directory, in the shared
+                                            home whose conversations survive account switches,
+                                            with the credential of <name>, or of an idle account
+                                            that has quota for --model. The account is held
+                                            until agy exits
   accounts list [--json]                    accounts, state, quota and cooldowns
   accounts quota [<name>...] [--refresh]    quota snapshots (--refresh asks Google)
   accounts login <name>                     browser sign-in (run it yourself, in a terminal)

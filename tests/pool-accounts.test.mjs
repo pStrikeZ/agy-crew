@@ -340,7 +340,20 @@ test('usage text documents accounts and --account', () => {
   assert.match(r.stderr, /--account <auto\|live\|name>/);
 });
 
-test('start runs agy in this directory as the account, holding it until agy exits', async () => {
+const sharedHomeOf = (sb) => path.join(globalHomeOf(sb), 'shared', 'home');
+const sharedToken = (sb) => path.join(sharedHomeOf(sb), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+const projectCacheOf = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
+
+async function leasesWhileRunning(sb, n = 1) {
+  let leases = [];
+  for (let i = 0; i < 200 && leases.length < n; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    try { leases = readPool(sb).leases; } catch {}
+  }
+  return leases;
+}
+
+test('start <name> runs agy in this directory in the shared home with that account\'s credential, holding it until agy exits', async () => {
   const sb = sandbox('pool-start');
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }]);
   const envFile = path.join(sb.root, 'env.jsonl');
@@ -356,10 +369,11 @@ test('start runs agy in this directory as the account, holding it until agy exit
   const r = await running;
   assert.equal(r.code, 3, 'agy\'s exit code is passed on');
   assert.deepEqual(agyCalls(sb), [['--model', 'x', '--json']], 'args after -- reach agy untouched');
-  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]), [[accountHomeOf(sb, 'b'), 'b@example.com']]);
+  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]), [[sharedHomeOf(sb), 'b@example.com']]);
   assert.equal(fs.readFileSync(cwdFile, 'utf8'), sb.repo);
   const pool = readPool(sb);
   assert.deepEqual(pool.leases, [], 'the hold ends with agy');
+  assert.equal(pool.shared, null);
   assert.ok(pool.accounts.find((a) => a.name === 'b').last_used_at);
 });
 
@@ -403,19 +417,6 @@ test('start without a name on an empty pool says how to add an account', () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /No pool accounts yet\. Add one with `agy-crew accounts login <name>`/);
 });
-
-const sharedHomeOf = (sb) => path.join(globalHomeOf(sb), 'shared', 'home');
-const sharedToken = (sb) => path.join(sharedHomeOf(sb), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
-const projectCacheOf = (home) => path.join(home, '.gemini', 'antigravity-cli', 'cache', 'default_project_id.txt');
-
-async function leasesWhileRunning(sb, n = 1) {
-  let leases = [];
-  for (let i = 0; i < 200 && leases.length < n; i++) {
-    await new Promise((r) => setTimeout(r, 20));
-    try { leases = readPool(sb).leases; } catch {}
-  }
-  return leases;
-}
 
 test('start without a name runs in the shared home with an idle account\'s credential and gives it back', async () => {
   const sb = sandbox('pool-start-shared');
@@ -471,6 +472,43 @@ test('a second shared start joins the running session on the same credential', a
     [[sharedHomeOf(sb), 'a@example.com'], [sharedHomeOf(sb), 'a@example.com']]);
   assert.equal(readPool(sb).shared, null);
   assert.equal(fs.existsSync(sharedToken(sb)), false);
+});
+
+test('a shared start does not join a session whose credential has no quota for its family', async () => {
+  const sb = sandbox('pool-start-shared-join-cooling');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }],
+    (p) => { p.cooldowns['a|gemini-3.1-pro'] = { retry_at: later }; });
+  const first = runAsync(sb, ['start'], { FAKE_AGY_SLEEP_MS: '1500' });
+  await leasesWhileRunning(sb, 1);
+  assert.equal(readPool(sb).shared.account, 'a');
+  const r = run(sb, ['start', '--model', 'gemini-3.1-pro-high']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, new RegExp(`running shared session \\(agy-crew pid \\d+\\) uses account a, which has no gemini-3.1-pro quota until ${later}`));
+  assert.match(r.stderr, /exit every shared agy, then start again so an account with quota is picked/);
+  assert.deepEqual(readPool(sb).leases.map((l) => l.account), ['a'], 'no second hold');
+  assert.equal((await first).code, 0);
+  assert.equal(agyCalls(sb).length, 1, 'agy ran only for the first start');
+});
+
+test('start <name> joins a running shared session on that account and is refused for another one', async () => {
+  const sb = sandbox('pool-start-named-join');
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }],
+    (p) => { p.cooldowns['a|gemini-3.1-pro'] = { retry_at: later }; });
+  const first = runAsync(sb, ['start', 'a'], { FAKE_AGY_SLEEP_MS: '2000' });
+  await leasesWhileRunning(sb, 1);
+  const other = run(sb, ['start', 'b']);
+  assert.equal(other.code, 1);
+  assert.match(other.stderr, /running shared session \(agy-crew pid \d+\) uses account a\.\n.*exit every shared agy, then start again to use b/);
+  assert.match(run(sb, ['start', 'nobody']).stderr, /unknown account "nobody"/);
+  const same = run(sb, ['start', 'a', '--model', 'gemini-3.1-pro-high']);
+  assert.equal(same.code, 0, same.stderr);
+  assert.match(same.stderr, /joining the running shared session, which uses account a/);
+  assert.match(same.stderr, new RegExp(`note: account a has no gemini-3.1-pro quota until ${later}`), 'a named account is used even when cooling');
+  assert.equal((await first).code, 0);
+  assert.equal(agyCalls(sb).length, 2);
+  assert.equal(readPool(sb).shared, null);
 });
 
 test('shared start is refused without launching agy when no account can lend', () => {
