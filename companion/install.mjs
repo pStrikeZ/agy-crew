@@ -15,6 +15,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PRODUCT, SKILL_PREFIX, UPSTREAM, globalHome } from './identity.mjs';
+import { sharedHome } from './pool/state.mjs';
+import { completionScript } from './completion.mjs';
 import { skillFiles } from '../scripts/generate-skills.mjs';
 
 const WIN = process.platform === 'win32';
@@ -26,11 +28,16 @@ export const HOSTS = {
   omp: { skills: ['.omp', 'agent', 'skills'], detect: ['.omp'] },
   opencode: { skills: ['.config', 'opencode', 'skills'], detect: ['.config', 'opencode'] },
   dsh: { skills: ['.dsh', 'skills'], detect: ['.dsh'] },
+  // The shared HOME that `start` and every pooled run use for agy itself: agy
+  // reads <HOME>/.agents/skills, so the personas are available inside it too.
+  // It belongs to agy-crew, so it is installed by default, detected or not.
+  shared: { base: sharedHome, skills: ['.agents', 'skills'], detect: [], always: true },
 };
 
 const home = (...parts) => path.join(os.homedir(), ...parts);
-const hostDir = key => home(...HOSTS[key].skills);
-const hostPresent = key => fs.existsSync(home(...HOSTS[key].detect));
+const hostBase = key => (HOSTS[key].base ? HOSTS[key].base() : os.homedir());
+const hostDir = key => path.join(hostBase(key), ...HOSTS[key].skills);
+const hostPresent = key => HOSTS[key].always || fs.existsSync(path.join(hostBase(key), ...HOSTS[key].detect));
 const fwd = p => p.replaceAll('\\', '/');
 const bundlesRoot = () => path.join(globalHome(), 'bundles');
 
@@ -268,6 +275,85 @@ function prune(currentName) {
 }
 
 // ---------------------------------------------------------------------------
+// shell completion
+// ---------------------------------------------------------------------------
+//
+// The completion scripts live in <globalHome>/completions/ and are refreshed on
+// every install. bash and zsh get one marked block in their rc file that sources
+// the script; fish autoloads ~/.config/fish/completions, so it gets a copy of
+// the script there. Only text between the markers (or a fish file carrying the
+// marker) is ever touched, and uninstall removes exactly that.
+
+const RC_BEGIN = `# >>> ${PRODUCT} completion >>>`;
+const RC_END = `# <<< ${PRODUCT} completion <<<`;
+const FISH_MARKER = `# managed by ${PRODUCT} install`;
+const completionsRoot = () => path.join(globalHome(), 'completions');
+const scriptFile = shell => path.join(completionsRoot(), `${PRODUCT}.${shell}`);
+
+const SHELL_TARGETS = {
+  bash: { rc: () => home('.bashrc'), detect: () => fs.existsSync(home('.bashrc')) },
+  zsh: { rc: () => path.join(process.env.ZDOTDIR || os.homedir(), '.zshrc'), detect: () => fs.existsSync(path.join(process.env.ZDOTDIR || os.homedir(), '.zshrc')) },
+  fish: { rc: () => home('.config', 'fish', 'completions', `${PRODUCT}.fish`), detect: () => fs.existsSync(home('.config', 'fish')) },
+};
+
+/** Shells to set up: those with an rc file (or fish config) plus the login shell. */
+function completionShells() {
+  const login = path.basename(process.env.SHELL || '').replace(/\.exe$/, '');
+  return Object.keys(SHELL_TARGETS).filter(sh => SHELL_TARGETS[sh].detect() || sh === login);
+}
+
+const rcBlock = shell => `${RC_BEGIN}\n[ -r "${fwd(scriptFile(shell))}" ] && . "${fwd(scriptFile(shell))}"\n${RC_END}\n`;
+const BLOCK_RE = new RegExp(`\\n?${RC_BEGIN}[\\s\\S]*?${RC_END}\\n?`);
+
+function readOr(file, fallback = '') { try { return fs.readFileSync(file, 'utf8'); } catch { return fallback; } }
+
+function writeFileAtomic(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, file);
+}
+
+/** Set one shell up. Returns 'created' | 'updated' | 'unchanged'; throws on I/O errors. */
+function installCompletion(shell) {
+  const script = completionScript(shell);
+  const target = SHELL_TARGETS[shell].rc();
+  if (shell === 'fish') {
+    const text = `${FISH_MARKER}\n${script}`;
+    const existing = readOr(target, null);
+    if (existing !== null && !existing.startsWith(FISH_MARKER)) return 'conflict';
+    if (existing === text) return 'unchanged';
+    writeFileAtomic(target, text);
+    return existing === null ? 'created' : 'updated';
+  }
+  writeFileAtomic(scriptFile(shell), script);
+  const rc = readOr(target, null);
+  const block = rcBlock(shell);
+  if (rc === null) { writeFileAtomic(target, block); return 'created'; }
+  const next = BLOCK_RE.test(rc) ? rc.replace(BLOCK_RE, (m) => (m.startsWith('\n') ? '\n' : '') + block) : `${rc}${rc && !rc.endsWith('\n') ? '\n' : ''}\n${block}`;
+  if (next === rc) return 'unchanged';
+  writeFileAtomic(target, next);
+  return BLOCK_RE.test(rc) ? 'updated' : 'created';
+}
+
+function uninstallCompletion(shell) {
+  const target = SHELL_TARGETS[shell].rc();
+  const text = readOr(target, null);
+  let removed = false;
+  if (text !== null) {
+    if (shell === 'fish') {
+      if (text.startsWith(FISH_MARKER)) { fs.rmSync(target); removed = true; }
+    } else if (BLOCK_RE.test(text)) {
+      const next = text.replace(BLOCK_RE, '\n').replace(/\n{3,}/g, '\n\n');
+      if (next.trim()) fs.writeFileSync(target, next.replace(/^\n+/, '')); else fs.writeFileSync(target, '');
+      removed = true;
+    }
+  }
+  fs.rmSync(scriptFile(shell), { force: true });
+  return removed;
+}
+
+// ---------------------------------------------------------------------------
 // install
 // ---------------------------------------------------------------------------
 
@@ -300,9 +386,9 @@ export function cmdInstall(opts) {
   const bundle = renderBundle();
   const selected = selectHosts(opts, {
     defaultPresent: () => {
-      const present = Object.keys(HOSTS).filter(hostPresent);
+      const present = Object.keys(HOSTS).filter(k => !HOSTS[k].always && hostPresent(k));
       if (!present.length) fail('no supported harness detected; pass --hosts <list> or --all');
-      return present;
+      return [...present, ...Object.keys(HOSTS).filter(k => HOSTS[k].always)];
     },
   });
 
@@ -332,6 +418,8 @@ export function cmdInstall(opts) {
     throw Object.assign(new Error('conflicts'), { exitCode: 1, alreadyPrinted: true });
   }
 
+  const shells = opts['no-completion'] ? [] : completionShells();
+
   if (opts['dry-run']) {
     if (opts.json) return;
     const lines = [`${PRODUCT} ${bundle.version} (dry run) → ${bundle.bundleDir}`];
@@ -339,6 +427,7 @@ export function cmdInstall(opts) {
       lines.push(`${h.host}  ${h.dir}`);
       for (const s of h.skills) lines.push(`  ${s.name}  ${s.change}`);
     }
+    for (const sh of shells) lines.push(`completion ${sh}  ${SHELL_TARGETS[sh].rc()}`);
     process.stdout.write(`${lines.join('\n')}\n`);
     return;
   }
@@ -365,9 +454,19 @@ export function cmdInstall(opts) {
   }
   prune(bundle.name);
 
+  // Completion is a convenience: a read-only rc file must not fail the install.
+  const completion = shells.map((shell) => {
+    try { return { shell, file: SHELL_TARGETS[shell].rc(), change: installCompletion(shell) }; } catch (error) {
+      process.stderr.write(`${PRODUCT} warning: could not set up ${shell} completion: ${error.message}\n`);
+      return { shell, file: SHELL_TARGETS[shell].rc(), change: 'failed' };
+    }
+  });
+
   if (!opts.json) {
     const lines = [`${PRODUCT} ${bundle.version} → ${bundle.bundleDir}`];
     for (const h of plan) lines.push(`${h.host.padEnd(9)} ${counts(h.skills).padEnd(22)} ${h.dir}`);
+    for (const c of completion) lines.push(`${('completion ' + c.shell).padEnd(9)} ${c.change.padEnd(22)} ${c.file}`);
+    if (completion.some(c => ['created', 'updated'].includes(c.change))) lines.push('Open a new shell to load tab completion.');
     lines.push(`Restart the harnesses (or open a new session) to load the skills. Smoke test: /${SKILL_PREFIX}ask reply with OK`);
     process.stdout.write(`${lines.join('\n')}\n`);
   }
@@ -427,6 +526,7 @@ export function cmdUninstall(opts) {
     }
     result.push({ host: key, dir: hostDir(key), removed });
   }
+  const completionRemoved = [];
   const remaining = Object.keys(HOSTS).some(key => managedEntries(key).length);
   if (remaining) prune(null);
   else {
@@ -434,10 +534,19 @@ export function cmdUninstall(opts) {
       process.stderr.write(`${PRODUCT} warning: could not remove ${bundlesRoot()}: ${error.message}\n`);
     }
   }
+  if (!remaining) {
+    for (const shell of Object.keys(SHELL_TARGETS)) {
+      try { if (uninstallCompletion(shell)) completionRemoved.push(shell); } catch (error) {
+        process.stderr.write(`${PRODUCT} warning: could not remove ${shell} completion: ${error.message}\n`);
+      }
+    }
+    try { fs.rmdirSync(completionsRoot()); } catch { /* not empty or absent */ }
+  }
   if (opts.json) {
-    process.stdout.write(`${JSON.stringify({ hosts: result }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ hosts: result, completion: completionRemoved }, null, 2)}\n`);
     return;
   }
+  if (completionRemoved.length) process.stdout.write(`${'completion'.padEnd(9)} removed from ${completionRemoved.join(', ')}\n`);
   if (!result.length) process.stdout.write(`${PRODUCT}: nothing to uninstall\n`);
   for (const h of result) process.stdout.write(`${h.host.padEnd(9)} ${h.removed} removed  ${h.dir}\n`);
 }

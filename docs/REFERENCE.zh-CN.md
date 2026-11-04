@@ -178,7 +178,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 `observe [id]` 用于立即查看任务。运行中返回进展，完成后返回最终状态、结果路径和收取提示；失败、取消或崩溃时，还会附上有长度限制的诊断和恢复信息。它始终返回 JSON，最多 8 KiB，不包含完整报告。
 
-`inspect [id]` 是给人用的实时查看器：一个常驻的、类似 tmux 的全屏窗口（需要终端）。第 0 个标签是 **Jobs** 页，列出最近的任务，运行中的排在前面；没有任务在跑时显示 `No tasks currently running.`。每个运行中的任务自动获得一个标签，窗口打开之后才启动的任务也会自动出现；标签持续读取任务的原始事件流，每次工具调用一行（`▶` 开始，`✓`/`✗` 结束并带耗时和输出摘要），并显示模型回复文字，底部状态行显示状态、模型、账号、耗时、工具/错误计数、token、最近工具。窗口不会自己退出：任务结束后标签仍保留，没有任务时窗口空闲等待下一个。按键：`Tab`/`←→` 切换，`0`–`9` 跳转，`↑↓` `PgUp` `PgDn` `g` `End` 滚动（在 Jobs 页则是移动选择），Jobs 页按 `Enter` 打开所选任务（包括已完成的），`x` 关闭标签，`q`/Ctrl-C 退出。鼠标也可用：滚轮滚动任务输出（在 Jobs 页则移动选择），点击标签切换，点击 Jobs 页的行打开任务。鼠标上报开启期间终端自带的文本选择会失效，按住 Shift 再拖选即可照常选中复制；也可以按 `m`（或启动时加 `--no-mouse`）关闭鼠标上报。退出时一定会关闭鼠标上报。`inspect <id>` 从该任务的标签开始。它只读：不写状态、不影响 `wait`，退出窗口也绝不会取消或向任务发信号。无警告成功的任务已经没有原始事件流（见下文），它的标签会如实说明并指向 `result`。`--plain`（`--no-follow` 或 stdout 不是终端时自动启用）是脚本用的形式：打印单个任务的日志并跟随到任务结束，退出码同任务（0/3/4/5）；`--no-follow` 只打印已有内容，`--no-color` 关闭颜色。agent 仍应使用 `wait`/`observe`，`inspect` 供人使用。
+`inspect [id]` 是给人用的实时查看器：一个常驻的、类似 tmux 的全屏窗口（需要终端）。第 0 个标签是 **Jobs** 页，列出最近的任务，运行中的排在前面；没有任务在跑时显示 `No tasks currently running.`。每个运行中的任务自动获得一个标签，窗口打开之后才启动的任务也会自动出现；标签持续读取任务的原始事件流，每次工具调用一行（`▶` 开始，`✓`/`✗` 结束并带耗时和输出摘要），并显示模型回复文字，底部状态行显示状态、模型、账号、耗时、工具/错误计数、token、最近工具。窗口不会自己退出：任务结束后标签仍保留，没有任务时窗口空闲等待下一个。按键：`Tab`/`←→` 切换，`0`–`9` 跳转，`↑↓` `PgUp` `PgDn` `g` `End` 滚动（在 Jobs 页则是移动选择），Jobs 页按 `Enter` 打开所选任务（包括已完成的），`x` 关闭标签，`q`/Ctrl-C 退出。鼠标也可用：滚轮滚动任务输出（在 Jobs 页则移动选择），点击标签切换，点击 Jobs 页的行打开任务。鼠标上报开启期间终端自带的文本选择会失效，按住 Shift 再拖选即可照常选中复制；也可以按 `m`（或启动时加 `--no-mouse`）关闭鼠标上报。退出时一定会关闭鼠标上报。`inspect <id>` 从该任务的标签开始。它会合并该仓库所有 git worktree 里的任务（每个 worktree 各有自己的 `.agy-crew/`，agent 在自动创建的 worktree 里工作时，任务就留在那里）：来自其他 worktree 的任务在 Jobs 页和状态行里标注 `[worktree 名]`，不带 id 的 `inspect` 取所有 worktree 中最新的任务，`--here` 只看当前 worktree。某个 worktree 的 `state.json` 损坏时给出警告并跳过。它只读：不写状态、不影响 `wait`，退出窗口也绝不会取消或向任务发信号。无警告成功的任务已经没有原始事件流（见下文），它的标签会如实说明并指向 `result`。`--plain`（`--no-follow` 或 stdout 不是终端时自动启用）是脚本用的形式：打印单个任务的日志并跟随到任务结束，退出码同任务（0/3/4/5）；`--no-follow` 只打印已有内容，`--no-color` 关闭颜色。agent 仍应使用 `wait`/`observe`，`inspect` 供人使用。
 
 任务完成后，可以收取已经运行的 `wait` 命令，或在没有待收取的等待命令时使用 `result [id]` 读取已保存的结果。`observe` 返回成功只说明本次调用已经结束，完整报告仍需要通过 `wait` 或 `result` 获取。`status [id]` 则用于列出任务，或查看单个任务的状态和日志尾部。
 
@@ -269,6 +269,8 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
 | `start [<name>] [--model <id>] [-- <agy args>...]` | 在当前终端、当前目录下、在共享 home 中交互式运行 agy，使用 `<name>` 的凭据；不带账号名时使用某个有额度的空闲账号的凭据。见[交互式会话](#交互式会话) |
+| `accounts rename <old> <new>` | 重命名空闲账号：目录、冷却记录、配额快照和会话绑定一并迁移。账号处于租约或借用中、正在为共享会话出借凭据、或新名字已被占用或不合法时拒绝 |
+| `accounts refresh-email [<name>...] [--json]` | 从各账号的令牌文件重新读取邮箱（离线；可先跑 `accounts quota --refresh` 让 agy 续期令牌）并更新池记录。会报告 `updated`、`unchanged`、缺令牌、令牌里没有邮箱、或邮箱已被另一个账号占用（此时不改记录） |
 | `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |
 
 `--json` 输出机器可读的结果。这些命令成功时退出码为 0，出错时为 1。它们不会创建仓库内状态，因此可以在任意目录运行。
@@ -557,10 +559,12 @@ agy-crew install
 | `agy-crew install` | 根据配置目录检测已有的 harness，并逐个安装 |
 | `agy-crew install --hosts claude,codex,omp,opencode,dsh` | 使用显式列表，不自动检测 |
 | `agy-crew install --all` | 安装到所有受支持的 host |
+| `agy-crew install --no-completion` | 跳过下面的 shell 补全设置 |
 | `agy-crew install --dry-run` | 只打印计划，不写入任何内容 |
 | `agy-crew install --status` | 显示各 host 的链接状态和 bundle |
 | `agy-crew install --json` | 输出机器可读结果（可与以上任一参数组合） |
 | `agy-crew uninstall [--hosts …\|--all]` | 只移除安装器自己创建的链接 |
+| `agy-crew completion <bash\|zsh\|fish>` | 打印 tab 补全脚本（`source <(agy-crew completion bash)`，zsh/fish 同理）。补全命令、参数、参数值（模型、effort、host）、账号名和任务 id；shell 通过隐藏命令 `agy-crew __complete <words…>` 取候选 |
 
 ### 支持的 host
 
@@ -571,8 +575,13 @@ agy-crew install
 | Oh My Pi（`omp`） | `~/.omp/agent/skills` |
 | OpenCode（`opencode`） | `~/.config/opencode/skills` |
 | DeepSeek Harness（`dsh`） | `~/.dsh/skills` |
+| agy 的共享 home（`shared`） | `~/.agy-crew/shared/home/.agents/skills`（默认安装总会包含它；`--hosts shared` 可单独选它） |
 
 `install` 不覆盖 Pi；Pi 请使用其软件包方式（`pi install git:github.com/pStrikeZ/agy-crew`）。
+
+### Shell 补全
+
+`install` 还会设置 tab 补全（`--no-completion` 可跳过）。脚本写在 `~/.agy-crew/completions/`，每次安装都会刷新。bash（`~/.bashrc`）和 zsh（`$ZDOTDIR/.zshrc` 或 `~/.zshrc`）会追加一段位于 `# >>> agy-crew completion >>>` 与 `# <<< agy-crew completion <<<` 之间的块，用来 source 该脚本；rc 文件其余内容绝不改动，重复安装只替换这一段。fish 则写 `~/.config/fish/completions/agy-crew.fish`（带托管标记；你自己写的同名文件不会被覆盖，只报告冲突）。某个 shell 在其 rc 文件（fish 为配置目录）存在或它是登录 shell（`$SHELL`）时才会设置。rc 里还没有 `compinit` 时，zsh 的脚本会自己调用。`uninstall` 在移除最后一个技能链接时一并移除这些块和文件。完成后新开一个 shell 即可。
 
 ### 工作方式
 
@@ -602,7 +611,7 @@ agy-crew 与上游 [agy-staff](https://github.com/keli-wen/agy-staff) 不能安�
 
 ## 升级
 
-Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.11`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
+Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.12`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
 
 ### 终端命令（`agy-crew install`）
 

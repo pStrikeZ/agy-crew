@@ -85,6 +85,7 @@ The skills work exactly the same: the bundle stores the absolute path of the com
 | Oh My Pi (`omp`) | `~/.omp/agent/skills` |
 | OpenCode (`opencode`) | `~/.config/opencode/skills` |
 | DeepSeek Harness (`dsh`) | `~/.dsh/skills` |
+| agy's shared home (`shared`) | `~/.agy-crew/shared/home/.agents/skills` (always included by a default install) |
 
 The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths, and each harness gets a directory link (`agy-crew-<persona>`; a junction on Windows, no elevation needed) pointing into that bundle. Anything in a skills directory that the installer did not create is user content and is never overwritten; any conflict aborts the whole run before writing and prints the paths plus a remedy. Pi is not covered by `install`; use the Pi package route below.
 

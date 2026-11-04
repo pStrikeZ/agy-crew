@@ -92,12 +92,13 @@ export function createRenderer({ color = false } = {}) {
 }
 
 /** One-line footer: status, ids and counters. */
-export function footer({ job, status, stats, now = Date.now(), color = false }) {
+export function footer({ job, status, stats, now = Date.now(), color = false, currentWorktree = null }) {
   const paint = (code, text) => (color ? `\x1b[${code}m${text}\x1b[0m` : text);
   const dot = { running: paint('33', '●'), done: paint('32', '●'), error: paint('31', '●'), crashed: paint('31', '●'),
     canceled: paint('35', '●'), attention: paint('33', '●') }[status] || '●';
   const elapsed = fmtDuration(((job.finished_at ? Date.parse(job.finished_at) : now) - Date.parse(job.started_at)) / 1000);
-  const parts = [`${dot} ${status}`, job.id, job.model, job.account, elapsed,
+  const elsewhere = job.worktree && job.worktree !== currentWorktree ? `[${job.worktree_name || job.worktree}]` : null;
+  const parts = [`${dot} ${status}`, job.id, elsewhere, job.model, job.account, elapsed,
     `${stats.tools} tools`, stats.errors ? `${stats.errors} errors` : null,
     `in ${fmtCount(stats.input_tokens)} out ${fmtCount(stats.output_tokens)}`,
     status === 'running' && stats.last_tool ? `last ${stats.last_tool}` : null];
@@ -136,7 +137,7 @@ export function createTail(getFile, onEvent) {
  *  getJob() re-reads the (read-only) job record; getStatus(job) resolves it.
  *  Resolves with the final status. */
 export async function follow({ getJob, getStatus, out = process.stdout, input = process.stdin,
-  follow: live = true, color = false, pollMs = 150, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  follow: live = true, color = false, currentWorktree = null, pollMs = 150, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const tty = !!out.isTTY && live;
   const renderer = createRenderer({ color });
   const width = () => Math.max(20, out.columns || 100);
@@ -150,7 +151,7 @@ export async function follow({ getJob, getStatus, out = process.stdout, input = 
   let footerShown = false;
   const showFooter = () => {
     if (!tty) return;
-    out.write('\r\x1b[2K' + clip(footer({ job, status, stats: renderer.stats, color })));
+    out.write('\r\x1b[2K' + clip(footer({ job, status, stats: renderer.stats, color, currentWorktree })));
     footerShown = true;
   };
   const write = (lines) => {
@@ -193,7 +194,7 @@ export async function follow({ getJob, getStatus, out = process.stdout, input = 
     if (stop && status === 'running') {
       write([`detached; ${job.id} keeps running (inspect ${job.id} to rejoin, cancel ${job.id} to stop it)`]);
     } else if (tty || !live) {
-      out.write(footer({ job, status, stats: renderer.stats, color }) + '\n');
+      out.write(footer({ job, status, stats: renderer.stats, color, currentWorktree }) + '\n');
     }
     return { status, detached: stop && status === 'running' };
   } finally {

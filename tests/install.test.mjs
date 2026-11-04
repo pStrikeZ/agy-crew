@@ -21,6 +21,7 @@ function env(sb) {
 }
 const install = (sb, args = [], extra = {}) => run(sb, ['install', ...args], { ...env(sb), ...extra });
 const skillsDir = (sb, host) => path.join(sb.home, ...HOST_DIRS[host]);
+const sharedSkillsDir = sb => path.join(sb.root, 'crew-home', 'shared', 'home', '.agents', 'skills');
 const bundlesDir = sb => path.join(sb.root, 'crew-home', 'bundles');
 const fwd = p => p.replaceAll('\\', '/');
 const norm = p => path.resolve(p.replace(/^\\\\\?\\/, '')).toLowerCase();
@@ -138,19 +139,20 @@ test('--all, --status and uninstall --all keep user content', () => {
   for (const host of Object.keys(HOST_DIRS)) {
     assert.equal(fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')).length, 8, host);
   }
+  assert.equal(fs.readdirSync(sharedSkillsDir(sb)).filter(n => n.startsWith('agy-crew-')).length, 8, 'shared home');
 
   const status = JSON.parse(install(sb, ['--status', '--json']).stdout);
-  assert.equal(status.hosts.length, 5);
+  assert.equal(status.hosts.length, 6);
   assert.ok(status.hosts.every(h => h.skills.every(s => s.state === 'managed-current')));
   assert.equal(status.bundles.filter(b => b.current).length, 1);
   const text = install(sb, ['--status']);
   assert.equal(text.code, 0);
-  assert.equal((text.stdout.match(/managed-current/g) || []).length, 40);
+  assert.equal((text.stdout.match(/managed-current/g) || []).length, 48);
   assert.match(text.stdout, /\(current\)/);
 
   const u = run(sb, ['uninstall', '--all'], env(sb));
   assert.equal(u.code, 0, u.stderr);
-  assert.equal((u.stdout.match(/8 removed/g) || []).length, 5);
+  assert.equal((u.stdout.match(/8 removed/g) || []).length, 6);
   for (const host of Object.keys(HOST_DIRS)) {
     const left = fs.existsSync(skillsDir(sb, host)) ? fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')) : [];
     assert.deepEqual(left, [], host);
@@ -230,4 +232,124 @@ test('user target is virtual and the repository checks still pass', () => {
   const r = spawnSync('npm', ['run', 'check:skills'], { cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(fs.existsSync(path.join(ROOT, 'user-skills')), false);
+});
+
+test('default install also links the skills into the shared home, and uninstall removes them', () => {
+  const sb = sandbox('inst-shared');
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  const r = install(sb);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /shared +8 created/);
+  const names = fs.readdirSync(sharedSkillsDir(sb)).filter(n => n.startsWith('agy-crew-')).sort();
+  assert.deepEqual(names, PERSONAS.map(p => `agy-crew-${p}`));
+  assert.ok(fs.existsSync(path.join(sharedSkillsDir(sb), 'agy-crew-ask', 'SKILL.md')));
+  assert.match(install(sb).stdout, /shared +8 unchanged/);
+
+  // --hosts picks it explicitly, without the other harnesses.
+  const only = install(sb, ['--hosts', 'shared', '--dry-run']);
+  assert.equal(only.code, 0, only.stderr);
+  assert.doesNotMatch(only.stdout, /^claude/m);
+
+  const u = run(sb, ['uninstall'], env(sb));
+  assert.equal(u.code, 0, u.stderr);
+  assert.match(u.stdout, /shared +8 removed/);
+  assert.deepEqual(fs.readdirSync(sharedSkillsDir(sb)).filter(n => n.startsWith('agy-crew-')), []);
+});
+
+// ---------------------------------------------------------------------------
+// shell completion in the rc files
+// ---------------------------------------------------------------------------
+
+const rcEnv = (sb, extra = {}) => ({ ...env(sb), SHELL: '/bin/sh', ZDOTDIR: '', ...extra });
+const BEGIN = '# >>> agy-crew completion >>>';
+
+test('install adds one marked completion block to the rc files, keeps the rest, and uninstall removes it', () => {
+  const sb = sandbox('inst-completion');
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  fs.writeFileSync(path.join(sb.home, '.bashrc'), 'export A=1\n');
+  fs.writeFileSync(path.join(sb.home, '.zshrc'), 'export B=2');          // no trailing newline
+  fs.mkdirSync(path.join(sb.home, '.config', 'fish'), { recursive: true });
+  const e = rcEnv(sb);
+  const r = install(sb, [], e);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /completion bash +created/);
+  assert.match(r.stdout, /Open a new shell/);
+  const bashrc = fs.readFileSync(path.join(sb.home, '.bashrc'), 'utf8');
+  assert.ok(bashrc.startsWith('export A=1\n'));
+  assert.equal(bashrc.split(BEGIN).length, 2);
+  assert.match(bashrc, /\[ -r ".*completions\/agy-crew\.bash" \] && \. ".*completions\/agy-crew\.bash"/);
+  assert.ok(fs.readFileSync(path.join(sb.home, '.zshrc'), 'utf8').startsWith('export B=2\n'));
+  const fish = fs.readFileSync(path.join(sb.home, '.config', 'fish', 'completions', 'agy-crew.fish'), 'utf8');
+  assert.match(fish, /^# managed by agy-crew install\n/);
+  assert.ok(fs.existsSync(path.join(sb.root, 'crew-home', 'completions', 'agy-crew.zsh')));
+
+  // Repeat run: nothing changes, no second block.
+  const again = install(sb, [], e);
+  assert.match(again.stdout, /completion bash +unchanged/);
+  assert.equal(fs.readFileSync(path.join(sb.home, '.bashrc'), 'utf8'), bashrc);
+
+  // A partial uninstall keeps completion; the last one removes it.
+  run(sb, ['uninstall', '--hosts', 'shared'], e);
+  assert.ok(fs.readFileSync(path.join(sb.home, '.bashrc'), 'utf8').includes(BEGIN));
+  const u = run(sb, ['uninstall'], e);
+  assert.equal(u.code, 0, u.stderr);
+  assert.match(u.stdout, /completion +removed from bash, zsh, fish/);
+  assert.equal(fs.readFileSync(path.join(sb.home, '.bashrc'), 'utf8').trim(), 'export A=1');
+  assert.equal(fs.readFileSync(path.join(sb.home, '.zshrc'), 'utf8').trim(), 'export B=2');
+  assert.equal(fs.existsSync(path.join(sb.home, '.config', 'fish', 'completions', 'agy-crew.fish')), false);
+  assert.equal(fs.existsSync(path.join(sb.root, 'crew-home', 'completions')), false);
+});
+
+test('completion: --no-completion skips it, the login shell gets an rc created, user fish files are left alone', () => {
+  const sb = sandbox('inst-completion-opt');
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  const skipped = install(sb, ['--no-completion'], rcEnv(sb));
+  assert.equal(skipped.code, 0, skipped.stderr);
+  assert.equal(fs.existsSync(path.join(sb.home, '.bashrc')), false);
+  assert.doesNotMatch(skipped.stdout, /completion (bash|zsh|fish)/);
+
+  const dry = install(sb, ['--dry-run'], rcEnv(sb, { SHELL: '/usr/bin/zsh' }));
+  assert.match(dry.stdout, /completion zsh/);
+  assert.equal(fs.existsSync(path.join(sb.home, '.zshrc')), false, 'dry run writes nothing');
+
+  const own = path.join(sb.home, '.config', 'fish', 'completions');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'agy-crew.fish'), 'my own\n');
+  const r = install(sb, [], rcEnv(sb, { SHELL: '/usr/bin/zsh' }));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(sb.home, '.zshrc'), 'utf8'), new RegExp(BEGIN));
+  assert.match(r.stdout, /completion fish +conflict/);
+  assert.equal(fs.readFileSync(path.join(own, 'agy-crew.fish'), 'utf8'), 'my own\n');
+});
+
+for (const [shell, probe] of [
+  ['zsh', (rc) => ['-f', '-c', `source ${rc}; print -r -- $_comps[agy-crew]`]],
+  ['bash', (rc) => ['--norc', '-c', `source ${rc}; complete -p agy-crew`]],
+]) {
+  test(`the rc block really loads in ${shell}`, { skip: spawnSync(shell, ['--version']).error ? `${shell} not installed` : false }, () => {
+    const sb = sandbox(`inst-completion-${shell}`);
+    fs.mkdirSync(path.join(sb.home, '.claude'));
+    const rcName = shell === 'zsh' ? '.zshrc' : '.bashrc';
+    fs.writeFileSync(path.join(sb.home, rcName), '');
+    assert.equal(install(sb, [], rcEnv(sb)).code, 0);
+    const r = spawnSync(shell, probe(path.join(sb.home, rcName)), { encoding: 'utf8', env: { ...process.env, HOME: sb.home } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, shell === 'zsh' ? /^_agy_crew$/m : /-F _agy_crew agy-crew/);
+  });
+}
+
+test('the installed fish completion answers', { skip: spawnSync('fish', ['--version']).error ? 'fish not installed' : false }, () => {
+  const sb = sandbox('inst-completion-fish');
+  fs.mkdirSync(path.join(sb.home, '.config', 'fish'), { recursive: true });
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  assert.equal(install(sb, [], rcEnv(sb)).code, 0);
+  const bin = path.join(sb.root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'agy-crew'), `#!/bin/sh\nexec "${process.execPath}" "${COMPANION}" "$@"\n`, { mode: 0o755 });
+  const ask = (line) => spawnSync('fish', ['--no-config', '-c',
+    `set fish_complete_path ${path.join(sb.home, '.config', 'fish', 'completions')}; complete -C '${line}'`],
+  { encoding: 'utf8', env: { ...process.env, HOME: sb.home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...env(sb) } }).stdout.split('\n').filter(Boolean);
+  assert.deepEqual(ask('agy-crew inspe'), ['inspect']);
+  assert.deepEqual(ask('agy-crew ask --effort '), ['high', 'low', 'medium']);
+  assert.deepEqual(ask('agy-crew install --hosts claude,s'), ['claude,shared']);
 });

@@ -109,6 +109,8 @@ import { cmdInstall, cmdUninstall } from './install.mjs';
 import { boundSnapshot, excerpt } from './observation.mjs';
 import { follow as followJob } from './inspect.mjs';
 import { runTui } from './tui.mjs';
+import { loadWorktreeJobs } from './worktrees.mjs';
+import { cmdCompletion, cmdComplete } from './completion.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
 import { cmdAccounts, cmdStart, poolSettingsFiles } from './accounts.mjs';
@@ -446,7 +448,7 @@ function pidAlive(pid) {
 }
 
 const VALUE_FLAGS = new Set(['job', 'conversation', 'model', 'effort', 'timeout', 'restrict', 'prompt', 'prompt-file', 'hosts', 'account', 'family', 'home', 'pid', 'retry-at']);
-const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh', 'no-follow', 'no-color', 'plain', 'no-mouse']);
+const BOOL_FLAGS = new Set(['continue', 'restricted', 'unrestricted', 'json', 'apply', 'dry-run', 'stdin', 'all', 'status', 'yes', 'refresh', 'no-follow', 'no-color', 'plain', 'no-mouse', 'here', 'no-completion']);
 
 // Flags dropped in 0.2. They get their own error instead of falling through to
 // "unknown flag", so a 0.1 caller learns what replaced them.
@@ -1630,15 +1632,28 @@ function findJob(id) {
 async function cmdInspect(opts) {
   const color = !opts['no-color'] && !process.env.NO_COLOR && !!process.stdout.isTTY;
   const interactive = process.stdout.isTTY && process.stdin.isTTY && !opts.plain && !opts['no-follow'];
+  // Jobs of every worktree of this repository (an agent working in an
+  // auto-created worktree keeps its own .agy-crew/ there); --here limits the
+  // view to the current worktree. Read-only, so no state lock.
+  const current = repoRoot();
+  const warned = new Set();
+  const onWarning = (message) => { if (!warned.has(message)) { warned.add(message); process.stderr.write(`${PRODUCT} warning: ${message}\n`); } };
+  const listJobs = () => loadWorktreeJobs({ current, here: !!opts.here, onWarning });
+  const pick = (id) => {
+    const jobs = listJobs();
+    const job = id ? (jobs.find((j) => j.id === id && j.worktree === current) || jobs.find((j) => j.id === id)) : jobs.at(-1);
+    if (!job) die(id ? `no job ${id} in this repository${opts.here ? '' : ' or any of its worktrees'}` : `no ${PRODUCT} jobs recorded in this repository${opts.here ? '' : ' or any of its worktrees'}`);
+    return job;
+  };
   if (interactive) {
-    const focus = opts._[0] ? findJob(opts._[0]).id : null;
-    await runTui({ listJobs: () => loadState().jobs || [], getStatus: liveJobStatus, focus, color: true, mouse: !opts['no-mouse'] });
+    const focus = opts._[0] ? pick(opts._[0]).id : null;
+    await runTui({ listJobs, getStatus: liveJobStatus, focus, color: true, mouse: !opts['no-mouse'], currentWorktree: current });
     return;
   }
-  const first = findJob(opts._[0]);
-  const read = () => (loadState().jobs || []).find((j) => j.id === first.id);
+  const first = pick(opts._[0]);
+  const read = () => listJobs().find((j) => j.id === first.id && j.worktree === first.worktree);
   const { status, detached } = await followJob({
-    getJob: () => read() || first, getStatus: liveJobStatus, follow: !opts['no-follow'], color,
+    getJob: () => read() || first, getStatus: liveJobStatus, follow: !opts['no-follow'], color, currentWorktree: current,
   });
   process.exitCode = detached ? 0 : (JOB_EXIT_CODES[status] ?? 1);
 }
@@ -2163,6 +2178,8 @@ Jobs
                                             (q quits; jobs keep running; --no-mouse)
   inspect <job> --plain [--no-follow] [--no-color]
                                             scrolling log of one job; exits with its code
+  inspect sees the jobs of every worktree of this repository (each keeps its own
+  .agy-crew/); --here limits it to the current one
 
 Accounts
   start [<name>] [--model <id>] [-- <agy args>]
@@ -2177,6 +2194,9 @@ Accounts
   accounts import <name> --home <dir>       copy a token from a HOME-shaped directory
   accounts enable|disable <name>            include in or exclude from selection
   accounts remove <name> [--yes]            delete an account
+  accounts rename <old> <new>               rename an idle account, keeping its state
+  accounts refresh-email [<name>...] [--json]
+                                            re-read emails from the token files
   accounts cooldown clear <name> [--family <f>]
   accounts cooldown record <name> --family <f> --retry-at <time>
   accounts hold acquire <name> --pid <pid> [--family <f>] [--json]
@@ -2184,7 +2204,11 @@ Accounts
 
 Setup
   setup [--apply] [--restrict <modes|none>] permission allowlist and per-repo policy
-  install | uninstall [--hosts <a,b>] [--all] [--dry-run] [--status]
+  install | uninstall [--hosts <a,b>] [--all] [--dry-run] [--status] [--no-completion]
+                                            (install also links the skills into the shared home
+                                            and sets up tab completion in your shell's rc file)
+  completion <bash|zsh|fish>                print a tab-completion script, e.g.
+                                            source <(${PRODUCT} completion bash)
   version                                   print versions of ${PRODUCT} and agy
   help                                      this text
 
@@ -2213,6 +2237,7 @@ function main() {
     return cmdStart(rest, { agyCommand, liveSettings: AGY_SETTINGS, defaultModel: DEFAULTS.model.staffer })
       .then((code) => { process.exitCode = code; });
   }
+  if (cmd === '__complete') return cmdComplete(rest);   // raw words, not flags
   const opts = parseFlags(rest, { taskCommand: MODES.includes(cmd) || cmd === 'continue' });
 
   if (MODES.includes(cmd)) return cmdRun(cmd, opts);
@@ -2239,6 +2264,8 @@ function main() {
       return cmdInstall(opts);
     case 'uninstall':
       return cmdUninstall(opts);
+    case 'completion':
+      return cmdCompletion(opts);
     case 'accounts':
       return cmdAccounts(opts, { agyCommand, liveSettings: AGY_SETTINGS });
     case '_worker':

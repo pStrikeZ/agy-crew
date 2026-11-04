@@ -79,7 +79,7 @@ function overviewRows(state, cols, height, now) {
   state.listTop = 1 + out.length;   // 0-based screen row of the first job line (below the tab bar)
   rows.slice(first, first + room).forEach((r, k) => {
     const open = state.known?.has(r.job.id) ? '▪' : ' ';
-    const line = `${first + k === state.cursor ? '▸' : ' '}${open}${dot(r.status)} ${pad(tabLabel(r.job), 16)}${pad(r.status, 10)}${pad(ago(r.job, now), 8)}${pad(hhmm(r.job.started_at), 10)}${r.job.model || ''}`;
+    const line = `${first + k === state.cursor ? '▸' : ' '}${open}${dot(r.status)} ${pad(tabLabel(r.job), 16)}${pad(r.status, 10)}${pad(ago(r.job, now), 8)}${pad(hhmm(r.job.started_at), 10)}${r.job.model || ''}${r.job.worktree && r.job.worktree !== state.currentWorktree ? `  [${r.job.worktree_name || r.job.worktree}]` : ''}`;
     out.push(first + k === state.cursor ? `\x1b[7m${pad(clip(line, cols), cols)}\x1b[0m` : line);
   });
   return out;
@@ -130,7 +130,7 @@ export function renderFrame(state, cols, rows, now = Date.now()) {
     const shown = wrapped.slice(Math.max(0, end - height), end);
     for (const line of shown) frame.push(pad(line, cols));
     for (let i = shown.length; i < height; i++) frame.push(pad('', cols));
-    status = footer({ job: view.job, status: view.status, stats: view.renderer.stats, now });
+    status = footer({ job: view.job, status: view.status, stats: view.renderer.stats, now, currentWorktree: state.currentWorktree });
     if (view.scroll > 0) hint = `scrolled back ${view.scroll} lines — End to follow`;
   }
   frame.push(`\x1b[7m${pad(clip(status, cols), cols)}\x1b[0m`);
@@ -230,9 +230,9 @@ function createView(job, color) {
  *  up jobs started later. listJobs() → job records (read-only);
  *  getStatus(job) → status string. */
 export function runTui({ listJobs, getStatus, focus = null, out = process.stdout, input = process.stdin,
-  color = true, pollMs = 200, mouse = true }) {
+  color = true, pollMs = 200, mouse = true, currentWorktree = null }) {
   return new Promise((resolve) => {
-    const state = { views: [], active: 0, page: 10, rows: [], cursor: 0, known: new Map(), closed: new Set(), open: null, mouse };
+    const state = { views: [], active: 0, page: 10, rows: [], cursor: 0, known: new Map(), closed: new Set(), open: null, mouse, currentWorktree };
     let lastFrame = [];
     let done = false;
     let mouseOn = false;   // what the terminal currently has, versus state.mouse

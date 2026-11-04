@@ -247,6 +247,58 @@ function cmdRemove(opts) {
   out(`Removed account ${name}. ${bound} conversation(s) bound to it can no longer be continued.`);
 }
 
+/** `accounts rename <old> <new>`: the name keys the account's directory, cooldowns,
+ *  quota snapshot and conversation bindings, so all of them move together. */
+function cmdRename(opts) {
+  const [, from, to] = opts._;
+  if (!from || !to) throw new PoolError('usage: accounts rename <old> <new>');
+  validateAccountName(to);
+  updatePool((pool) => {
+    requireAccount(pool, from);
+    if (from === to) throw new PoolError(`account ${from} already has that name`);
+    if (pool.accounts.some((a) => a.name === to)) throw new PoolError(`account "${to}" already exists`);
+    if (busy(pool, from)) throw new PoolError(`account ${from} is in use (lease or loan); try again when it is idle`);
+    if (pool.shared?.account === from) throw new PoolError(`account ${from} lends the credential of the shared session; exit it first`);
+    if (fs.existsSync(accountDir(to))) throw new PoolError(`${accountDir(to)} already exists; remove it or pick another name`);
+    fs.renameSync(accountDir(from), accountDir(to));
+    pool.accounts.find((a) => a.name === from).name = to;
+    for (const [key, value] of Object.entries(pool.cooldowns)) {
+      if (!key.startsWith(`${from}|`)) continue;
+      delete pool.cooldowns[key];
+      pool.cooldowns[`${to}|${key.slice(from.length + 1)}`] = value;
+    }
+    if (pool.quota[from]) { pool.quota[to] = pool.quota[from]; delete pool.quota[from]; }
+    for (const c of Object.values(pool.conversations)) if (c.account === from) c.account = to;
+  });
+  out(`Renamed account ${from} to ${to}.`);
+}
+
+/** `accounts refresh-email [<name>...]`: re-read the email from each account's
+ *  token file (offline; `quota --refresh` renews tokens through agy first) and
+ *  update the pool record. A token without an email, or one that another
+ *  account already carries, leaves the record alone and is reported. */
+function cmdRefreshEmail(opts) {
+  const names = opts._.slice(1);
+  const results = updatePool((pool) => {
+    for (const name of names) requireAccount(pool, name);
+    const targets = names.length ? pool.accounts.filter((a) => names.includes(a.name)) : pool.accounts;
+    return targets.map((account) => {
+      const previous = account.email || null;
+      const token = readToken(accountHome(account.name));
+      if (!token) return { name: account.name, previous, email: previous, status: 'no token (accounts login ' + account.name + ')' };
+      if (!token.email) return { name: account.name, previous, email: previous, status: 'token carries no email' };
+      const dup = pool.accounts.find((a) => a.email === token.email && a.name !== account.name);
+      if (dup) return { name: account.name, previous, email: previous, status: `token is ${token.email}, already enrolled as "${dup.name}"` };
+      account.email = token.email;
+      return { name: account.name, previous, email: token.email, status: previous === token.email ? 'unchanged' : 'updated' };
+    });
+  });
+  if (opts.json) return printJson({ accounts: results });
+  if (!results.length) return out('No pool accounts. Add one with `accounts login <name>`.');
+  out(renderTable(['ACCOUNT', 'EMAIL', 'RESULT'], results.map((r) => [r.name, r.email || 'unknown',
+    r.status === 'updated' ? `updated (was ${r.previous || 'unknown'})` : r.status])).join('\n'));
+}
+
 function cmdToggle(opts, disabled) {
   const name = opts._[1];
   updatePool((pool) => { requireAccount(pool, name).disabled = disabled; });
@@ -612,15 +664,17 @@ export async function cmdAccounts(opts, deps) {
     case 'login': return cmdLogin(opts, deps);
     case 'import': return cmdImport(opts);
     case 'remove': return cmdRemove(opts);
+    case 'rename': return cmdRename(opts);
+    case 'refresh-email': return cmdRefreshEmail(opts);
     case 'enable': return cmdToggle(opts, false);
     case 'disable': return cmdToggle(opts, true);
     case 'cooldown': return cmdCooldown(opts);
     case 'hold': return cmdHold(opts);
     case 'quota': return cmdQuota(opts, deps);
     default:
-      throw new PoolError('usage: accounts <list|login|import|remove|enable|disable|cooldown|hold|quota> ...\n' +
+      throw new PoolError('usage: accounts <list|login|import|remove|rename|refresh-email|enable|disable|cooldown|hold|quota> ...\n' +
         '  accounts list [--json]\n  accounts login <name>\n  accounts import <name> --home <dir>\n' +
-        '  accounts remove <name> [--yes]\n  accounts enable|disable <name>\n' +
+        '  accounts remove <name> [--yes]\n  accounts rename <old> <new>\n  accounts refresh-email [<name>...] [--json]\n  accounts enable|disable <name>\n' +
         '  accounts cooldown clear <name> [--family <f>]\n  accounts cooldown record <name> --family <f> --retry-at <time>\n' +
         '  accounts hold acquire <name> --pid <pid> [--family <f>] [--json]\n  accounts hold release <id> [--json]\n' +
         '  accounts quota [<name>...] [--refresh] [--json]');
