@@ -29,7 +29,7 @@ export function clientUserAgent(agyCommand, { platform = process.platform, arch 
 
 /** Run agy once so it refreshes the file-backed token itself. Async, so the
  *  progress line keeps drawing meanwhile. */
-function warmUp(home, agyCommand) {
+export async function warmUp(home, agyCommand) {
   const agy = agyCommand(['-p', 'reply with one word: pong', '--output-format', 'json']);
   return new Promise((resolve) => {
     const child = spawn(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), stdio: 'ignore', timeout: 60_000, windowsHide: true });

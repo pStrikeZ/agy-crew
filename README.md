@@ -253,6 +253,27 @@ Already have accounts? `agy-crew accounts import work2 --home <dir>` copies the 
 
 Parallel jobs now make sense up to roughly the number of ready accounts. With an empty pool everything runs on your live login.
 
+### omp: run omp on a pool account (experimental)
+
+Install it either way:
+
+```bash
+agy-crew install --hosts omp   # skills plus the omp plugin loader
+# or, from the npm package:
+omp plugin install agy-crew
+```
+
+Then launch omp through the account pool:
+
+```bash
+agy-crew omp --account work1 -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --account auto  -- --model google-antigravity/gemini-3.8-flash
+```
+
+`--` ends agy-crew's flags; everything after it goes to omp unchanged. The command selects an account, holds it until omp exits, and exports the account name for the plugin. omp ships `google-antigravity` paused ("Google may restrict accounts that use Antigravity outside its own apps"); under `agy-crew omp` only, the plugin registers a same-id OAuth provider to take the id back and installs the selected account as the session's **runtime bearer** (no `agent.db` write, no profile, no session restriction). A background agy warm-up refreshes the bearer before expiry. The prompt rewrite removes block 0's `§ Role / You are omp's trusted coding assistant.` and the `cfg://`/`omp://` entries, adds `identity.tmpl`, and `before_provider_request` strips `omp://` examples from tool declarations; tool schemas, skills, rules, and the footer stay as they are.
+
+Limitation: one pool account per omp process. In-process multi-account, per-session balancing still needs the full plugin mode. The extension is inert when `AGY_CREW_OMP_ACCOUNT` is unset, so a plain `omp` is unchanged.
+
 ## Core design
 
 `lead` adds task orchestration guidance for your current agent. Within lead, orient enough to frame the assignment, delegate substantive work to `staffer` by default, wait for the result, then assess it and integrate or follow up. Specialists provide dedicated guidance when useful, while `ask` is reserved for testing. The host owns cross-task decisions, acceptance, integration, and delivery, using the existing jobs workflow. Invoke `/agy-crew-lead` (or `/agy-crew:lead` on the Claude Code plugin route, `$agy-crew:lead` on the Codex plugin route, `/skill:agy-crew-lead` on Pi).

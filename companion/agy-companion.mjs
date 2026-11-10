@@ -114,6 +114,7 @@ import { cmdCompletion, cmdComplete } from './completion.mjs';
 import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
 import { cmdAccounts, cmdStart, poolSettingsFiles } from './accounts.mjs';
+import { cmdOmp } from './omp.mjs';
 import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
 import { classifyFailureText, isCooldownReason, modelFamily } from './pool/results.mjs';
 import { loadPool, updatePool, poolExists } from './pool/state.mjs';
@@ -2188,6 +2189,10 @@ Accounts
                                             with the credential of <name>, or of an idle account
                                             that has quota for --model. The account is held
                                             until agy exits
+  omp [--account auto|<name>|live] [--family <f>] [-- <omp args>]
+                                            run omp on one held pool account; the bundled
+                                            omp extension seeds the credential and rewrites
+                                            omp's block-0 role. Requires the omp plugin
   accounts list [--json]                    accounts, state, quota and cooldowns
   accounts quota [<name>...] [--refresh]    quota snapshots (--refresh asks Google)
   accounts login <name>                     browser sign-in (run it yourself, in a terminal)
@@ -2235,6 +2240,10 @@ function main() {
   if (['version', '--version', '-v'].includes(cmd)) return cmdVersion();
   if (cmd === 'start') {
     return cmdStart(rest, { agyCommand, liveSettings: AGY_SETTINGS, defaultModel: DEFAULTS.model.staffer })
+      .then((code) => { process.exitCode = code; });
+  }
+  if (cmd === 'omp') {
+    return cmdOmp(rest, { agyCommand, defaultFamily: DEFAULTS.model.staffer })
       .then((code) => { process.exitCode = code; });
   }
   if (cmd === '__complete') return cmdComplete(rest);   // raw words, not flags

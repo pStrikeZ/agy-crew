@@ -474,6 +474,8 @@ From a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew 
 | `agy-crew uninstall [--hosts …\|--all]` | Remove only the links the installer created |
 | `agy-crew completion <bash\|zsh\|fish>` | Print a tab-completion script (`source <(agy-crew completion bash)`, or the zsh/fish equivalent). It completes commands, flags, flag values (models, efforts, hosts), account names and job ids; the shell calls the hidden `agy-crew __complete <words…>` |
 
+On the `omp` host, `install` also writes `~/.omp/agent/extensions/agy-crew-omp.ts`, a managed loader that re-exports the bundled `omp/extension.mjs`. `agy-crew omp` needs that extension; `uninstall` removes the loader along with the links. A non-managed file at that path is a conflict and aborts the install before anything is written.
+
 ### Hosts
 
 | Host (`--hosts` id) | Skills directory |

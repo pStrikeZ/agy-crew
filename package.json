@@ -18,6 +18,7 @@
   "homepage": "https://github.com/pStrikeZ/agy-crew",
   "bugs": "https://github.com/pStrikeZ/agy-crew/issues",
   "files": [
+    "omp/",
     "skills/",
     "pi-skills/",
     "opencode-skills/",
@@ -51,5 +52,10 @@
   "exports": "./opencode.mjs",
   "engines": {
     "opencode": ">=1.18.34 <2"
+  },
+  "omp": {
+    "extensions": [
+      "./omp/extension.mjs"
+    ]
   }
 }

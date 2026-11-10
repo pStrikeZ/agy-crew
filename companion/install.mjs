@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PRODUCT, SKILL_PREFIX, UPSTREAM, globalHome } from './identity.mjs';
 import { sharedHome } from './pool/state.mjs';
 import { completionScript } from './completion.mjs';
@@ -25,7 +25,7 @@ const STAGING_GRACE_MS = 5 * 60 * 1000;
 export const HOSTS = {
   claude: { skills: ['.claude', 'skills'], detect: ['.claude'] },
   codex: { skills: ['.agents', 'skills'], detect: ['.codex'] },
-  omp: { skills: ['.omp', 'agent', 'skills'], detect: ['.omp'] },
+  omp: { skills: ['.omp', 'agent', 'skills'], extension: ['.omp', 'agent', 'extensions'], detect: ['.omp'] },
   opencode: { skills: ['.config', 'opencode', 'skills'], detect: ['.config', 'opencode'] },
   dsh: { skills: ['.dsh', 'skills'], detect: ['.dsh'] },
   // The shared HOME that `start` and every pooled run use for agy itself: agy
@@ -37,6 +37,33 @@ export const HOSTS = {
 const home = (...parts) => path.join(os.homedir(), ...parts);
 const hostBase = key => (HOSTS[key].base ? HOSTS[key].base() : os.homedir());
 const hostDir = key => path.join(hostBase(key), ...HOSTS[key].skills);
+const hostExtensionDir = key => path.join(hostBase(key), ...HOSTS[key].extension);
+const EXTENSION_MARKER = `// managed by ${PRODUCT} install`;
+const extensionPath = key => path.join(hostExtensionDir(key), `${PRODUCT}-omp.ts`);
+
+/** The omp loader that re-exports the bundled extension from this package. */
+export function extensionContent(root = packageRoot()) {
+  const target = pathToFileURL(path.join(root, 'omp', 'extension.mjs')).href;
+  return `${EXTENSION_MARKER}\nexport { default } from ${JSON.stringify(target)};\n`;
+}
+
+/** Install state for a host's extension, or null when the host has none. */
+function extensionState(key, root = packageRoot()) {
+  if (!HOSTS[key]?.extension) return null;
+  const dest = extensionPath(key);
+  const content = extensionContent(root);
+  if (!lstat(dest)) return { dest, content, change: 'created' };
+  let existing;
+  try { existing = fs.readFileSync(dest, 'utf8'); } catch { return { dest, content, change: 'conflict' }; }
+  if (!existing.startsWith(EXTENSION_MARKER)) return { dest, content, change: 'conflict' };
+  return { dest, content, change: existing === content ? 'unchanged' : 'updated' };
+}
+
+/** True when an installed omp loader is ours. */
+function hasManagedExtension() {
+  const dest = extensionPath('omp');
+  try { return fs.readFileSync(dest, 'utf8').startsWith(EXTENSION_MARKER); } catch { return false; }
+}
 const hostPresent = key => HOSTS[key].always || fs.existsSync(path.join(hostBase(key), ...HOSTS[key].detect));
 const fwd = p => p.replaceAll('\\', '/');
 const bundlesRoot = () => path.join(globalHome(), 'bundles');
@@ -393,20 +420,36 @@ export function cmdInstall(opts) {
   });
 
   const conflicts = upstreamConflicts(selected, bundle.personas);
-  const plan = selected.map(key => ({
-    host: key,
-    dir: hostDir(key),
-    skills: bundle.personas.map(persona => {
-      const name = `${SKILL_PREFIX}${persona}`;
-      const dest = path.join(hostDir(key), name);
-      const change = classify(dest, path.join(bundle.bundleDir, name));
-      if (change === 'conflict') {
-        conflicts.push({ path: dest, reason: 'exists and was not created by agy-crew', remedy: `move or remove ${dest}, then re-run install` });
-      }
-      return { name, dest, change };
-    }),
+  const plan = selected.map(key => {
+    const extension = extensionState(key);
+    if (extension?.change === 'conflict') {
+      conflicts.push({
+        path: extension.dest,
+        reason: 'exists and was not created by agy-crew',
+        remedy: `move or remove ${extension.dest}, then re-run install`,
+      });
+    }
+    return {
+      host: key,
+      dir: hostDir(key),
+      skills: bundle.personas.map(persona => {
+        const name = `${SKILL_PREFIX}${persona}`;
+        const dest = path.join(hostDir(key), name);
+        const change = classify(dest, path.join(bundle.bundleDir, name));
+        if (change === 'conflict') {
+          conflicts.push({ path: dest, reason: 'exists and was not created by agy-crew', remedy: `move or remove ${dest}, then re-run install` });
+        }
+        return { name, dest, change };
+      }),
+      extension,
+    };
+  });
+  const publicPlan = plan.map(h => ({
+    host: h.host,
+    dir: h.dir,
+    skills: h.skills.map(({ name, change }) => ({ name, change })),
+    ...(h.extension ? { extension: { path: h.extension.dest, change: h.extension.change } } : {}),
   }));
-  const publicPlan = plan.map(h => ({ host: h.host, dir: h.dir, skills: h.skills.map(({ name, change }) => ({ name, change })) }));
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify({ version: bundle.version, bundle: bundle.bundleDir, hosts: publicPlan, conflicts }, null, 2)}\n`);
@@ -426,6 +469,7 @@ export function cmdInstall(opts) {
     for (const h of plan) {
       lines.push(`${h.host}  ${h.dir}`);
       for (const s of h.skills) lines.push(`  ${s.name}  ${s.change}`);
+      if (h.extension) lines.push(`  ${path.basename(h.extension.dest)}  ${h.extension.change}`);
     }
     for (const sh of shells) lines.push(`completion ${sh}  ${SHELL_TARGETS[sh].rc()}`);
     process.stdout.write(`${lines.join('\n')}\n`);
@@ -442,12 +486,22 @@ export function cmdInstall(opts) {
         makeLink(path.join(bundle.bundleDir, s.name), s.dest);
         done.push({ dest: s.dest, previous });
       }
+      if (h.extension && h.extension.change !== 'unchanged') {
+        const previousText = h.extension.change === 'updated' ? fs.readFileSync(h.extension.dest, 'utf8') : null;
+        writeFileAtomic(h.extension.dest, h.extension.content);
+        done.push({ dest: h.extension.dest, previousText });
+      }
     }
   } catch (error) {
-    for (const { dest, previous } of done.reverse()) {
+    for (const { dest, previous, previousText } of done.reverse()) {
       try {
-        removeLink(dest);
-        if (previous) makeLink(previous, dest);
+        if (previousText !== undefined) {
+          if (previousText === null) fs.rmSync(dest, { force: true });
+          else writeFileAtomic(dest, previousText);
+        } else {
+          removeLink(dest);
+          if (previous) makeLink(previous, dest);
+        }
       } catch { /* best effort rollback */ }
     }
     fail(`install failed and was rolled back: ${error.message}`);
@@ -464,7 +518,10 @@ export function cmdInstall(opts) {
 
   if (!opts.json) {
     const lines = [`${PRODUCT} ${bundle.version} → ${bundle.bundleDir}`];
-    for (const h of plan) lines.push(`${h.host.padEnd(9)} ${counts(h.skills).padEnd(22)} ${h.dir}`);
+    for (const h of plan) {
+      lines.push(`${h.host.padEnd(9)} ${counts(h.skills).padEnd(22)} ${h.dir}`);
+      if (h.extension) lines.push(`${h.host.padEnd(9)} ${('extension ' + h.extension.change).padEnd(22)} ${h.extension.dest}`);
+    }
     for (const c of completion) lines.push(`${('completion ' + c.shell).padEnd(9)} ${c.change.padEnd(22)} ${c.file}`);
     if (completion.some(c => ['created', 'updated'].includes(c.change))) lines.push('Open a new shell to load tab completion.');
     lines.push(`Restart the harnesses (or open a new session) to load the skills. Smoke test: /${SKILL_PREFIX}ask reply with OK`);
@@ -478,18 +535,29 @@ export function cmdInstall(opts) {
 
 function cmdStatus(opts) {
   const bundle = renderBundle();
-  const hosts = Object.keys(HOSTS).map(key => ({
-    host: key,
-    present: hostPresent(key),
-    dir: hostDir(key),
-    skills: bundle.personas.map(persona => {
-      const name = `${SKILL_PREFIX}${persona}`;
-      const dest = path.join(hostDir(key), name);
-      const change = classify(dest, path.join(bundle.bundleDir, name));
-      const state = { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[change];
-      return { name, state };
-    }),
-  }));
+  const hosts = Object.keys(HOSTS).map(key => {
+    const extension = extensionState(key);
+    return {
+      host: key,
+      present: hostPresent(key),
+      dir: hostDir(key),
+      skills: bundle.personas.map(persona => {
+        const name = `${SKILL_PREFIX}${persona}`;
+        const dest = path.join(hostDir(key), name);
+        const change = classify(dest, path.join(bundle.bundleDir, name));
+        const state = { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[change];
+        return { name, state };
+      }),
+      ...(extension
+        ? {
+            extension: {
+              path: extension.dest,
+              state: { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[extension.change],
+            },
+          }
+        : {}),
+    };
+  });
   let bundles = [];
   try { bundles = fs.readdirSync(bundlesRoot()).sort(); } catch { /* none */ }
   const listing = bundles.map(name => ({ name, current: name === bundle.name }));
@@ -501,6 +569,7 @@ function cmdStatus(opts) {
   for (const h of hosts) {
     lines.push(`${h.host.padEnd(9)} ${h.present ? 'present' : 'absent'}  ${h.dir}`);
     for (const s of h.skills) lines.push(`  ${s.name.padEnd(22)} ${s.state}`);
+    if (h.extension) lines.push(`  ${path.basename(h.extension.path).padEnd(22)} ${h.extension.state}`);
   }
   lines.push(`bundles (${bundlesRoot()}):`);
   if (!listing.length) lines.push('  (none)');
@@ -514,7 +583,12 @@ function cmdStatus(opts) {
 
 export function cmdUninstall(opts) {
   const selected = selectHosts(opts, {
-    defaultPresent: () => Object.keys(HOSTS).filter(key => managedEntries(key).length),
+    defaultPresent: () => [
+      ...new Set([
+        ...Object.keys(HOSTS).filter(key => managedEntries(key).length),
+        ...(hasManagedExtension() ? ['omp'] : []),
+      ]),
+    ],
   });
   const result = [];
   for (const key of selected) {
@@ -524,10 +598,16 @@ export function cmdUninstall(opts) {
         process.stderr.write(`${PRODUCT} warning: could not remove ${dest}: ${error.message}\n`);
       }
     }
-    result.push({ host: key, dir: hostDir(key), removed });
+    let extensionRemoved = false;
+    if (key === 'omp' && hasManagedExtension()) {
+      try { fs.rmSync(extensionPath('omp'), { force: true }); extensionRemoved = true; } catch (error) {
+        process.stderr.write(`${PRODUCT} warning: could not remove ${extensionPath('omp')}: ${error.message}\n`);
+      }
+    }
+    result.push({ host: key, dir: hostDir(key), removed, extensionRemoved });
   }
   const completionRemoved = [];
-  const remaining = Object.keys(HOSTS).some(key => managedEntries(key).length);
+  const remaining = Object.keys(HOSTS).some(key => managedEntries(key).length) || hasManagedExtension();
   if (remaining) prune(null);
   else {
     try { fs.rmSync(bundlesRoot(), { recursive: true, force: true }); } catch (error) {
@@ -548,5 +628,8 @@ export function cmdUninstall(opts) {
   }
   if (completionRemoved.length) process.stdout.write(`${'completion'.padEnd(9)} removed from ${completionRemoved.join(', ')}\n`);
   if (!result.length) process.stdout.write(`${PRODUCT}: nothing to uninstall\n`);
-  for (const h of result) process.stdout.write(`${h.host.padEnd(9)} ${h.removed} removed  ${h.dir}\n`);
+  for (const h of result) {
+    process.stdout.write(`${h.host.padEnd(9)} ${h.removed} removed  ${h.dir}\n`);
+    if (h.extensionRemoved) process.stdout.write(`${h.host.padEnd(9)} extension removed  ${extensionPath(h.host)}\n`);
+  }
 }

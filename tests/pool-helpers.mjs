@@ -16,7 +16,7 @@ export const FAMILY = 'gemini-3.8-flash';
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 export const tokenJson = (email, extra = {}) => ({
-  token: { access_token: 'fake-access', expiry: new Date(Date.now() + 3600_000).toISOString(), id_token: `${b64({ alg: 'none' })}.${b64({ email })}.` },
+  token: { access_token: 'fake-access', refresh_token: 'fake-refresh', expiry: new Date(Date.now() + 3600_000).toISOString(), id_token: `${b64({ alg: 'none' })}.${b64({ email })}.` },
   ...extra,
 });
 

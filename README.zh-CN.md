@@ -211,6 +211,27 @@ agy-crew accounts list              # work1 显示为 ready
 
 现在，并行任务的数量大致以就绪账号数为宜。账号池为空时，所有任务都跑在你的 live 登录上。
 
+### omp：用池账号运行 omp（实验）
+
+装法有两种，任选其一：
+
+```bash
+agy-crew install --hosts omp   # 同时装技能和 omp 插件 loader
+# 或（npm 包方式）
+omp plugin install agy-crew
+```
+
+然后用 `agy-crew omp` 启动。它复用 `chooseAccount` 选号，持有该账号直到 omp 退出，并把账号名写进环境变量供插件读取：
+
+```bash
+agy-crew omp --account work1 -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --account auto  -- --model google-antigravity/gemini-3.8-flash
+```
+
+`--` 之后是 omp 自己的参数，原样传递。omp 默认把 `google-antigravity` 标记为 paused（“Google may restrict accounts that use Antigravity outside its own apps”）；插件只在 `agy-crew omp` 环境下注册一个同名 OAuth provider 取回该 id，并把选中账号作为 **runtime bearer** 注入（不写 `agent.db`、不建 profile、不 restrict session），由后台 agy warm-up 在过期前刷新。`before_agent_start` 删除 omp block 0 的 `§ Role / You are omp's trusted coding assistant.` 和 `cfg://`/`omp://` 入口，换成 Antigravity 的 `identity.tmpl`，其余工具描述、skills、rules、footer 保留；`before_provider_request` 还会清掉工具声明里的 `omp://` 示例。
+
+限制：一个 omp 进程只使用一个池账号；同一进程内多账号、按 session 均衡仍需要完整插件模式。没有设置 `AGY_CREW_OMP_ACCOUNT` 时插件完全惰性，普通 `omp` 行为不变。
+
 ## 核心设计
 
 `lead` 为当前主 agent 增加任务编排指导。在 lead 工作流中，主 agent 了解至足以明确任务后，默认用 `staffer` 承担实质性工作，等待结果返回后再验收、整合或追加任务；专门指导有帮助时再选择 specialist，`ask` 仅用于测试。主 agent 负责跨任务决策、验收、整合和交付，复用现有 jobs 工作流。使用 `/agy-crew-lead`（Claude Code 插件方式为 `/agy-crew:lead`，Codex 插件方式为 `$agy-crew:lead`，Pi 为 `/skill:agy-crew-lead`）。

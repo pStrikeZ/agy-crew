@@ -566,6 +566,8 @@ agy-crew install
 | `agy-crew uninstall [--hosts …\|--all]` | 只移除安装器自己创建的链接 |
 | `agy-crew completion <bash\|zsh\|fish>` | 打印 tab 补全脚本（`source <(agy-crew completion bash)`，zsh/fish 同理）。补全命令、参数、参数值（模型、effort、host）、账号名和任务 id；shell 通过隐藏命令 `agy-crew __complete <words…>` 取候选 |
 
+在 `omp` host 上，`install` 还会写入 `~/.omp/agent/extensions/agy-crew-omp.ts`：一个受管的 loader，重新导出包内的 `omp/extension.mjs`。`agy-crew omp` 需要这个扩展；`uninstall` 会随链接一起移除它。该路径若已有非本安装器创建的文件，会作为冲突中止安装，不写入任何内容。
+
 ### 支持的 host
 
 | Host（`--hosts` 标识） | 技能目录 |
