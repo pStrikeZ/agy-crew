@@ -49,14 +49,3 @@ test('agy-crew omp refuses an unknown account', async () => {
   assert.equal(result.code, 1);
   assert.match(result.stderr, /unknown account "missing"/);
 });
-
-test('agy-crew omp --account live skips the pool and holds nothing', async () => {
-  const sb = sandbox();
-  seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
-  const out = path.join(sb.root, 'omp.json');
-  const result = await runAsync(sb, ['omp', '--account', 'live'], { OMP_BIN: FAKE_OMP, FAKE_OMP_OUT: out });
-  assert.equal(result.code, 0, result.stderr);
-  const payload = JSON.parse(fs.readFileSync(out, 'utf8'));
-  assert.equal(payload.account, 'live');
-  assert.equal(payload.holds, 0);
-});

@@ -11,7 +11,6 @@
  *      identity and strips the omp/cfg/omp URL fingerprints.
  */
 import { spawn } from 'node:child_process';
-import os from 'node:os';
 import { readOmpCredential, toStructuredApiKey } from './credential.mjs';
 import { accountHome } from './paths.mjs';
 import { IDENTITY_SENTINEL, identityText, sanitizeTools, transformBlock0 } from './prompt.mjs';
@@ -44,7 +43,6 @@ function installRuntimeKey(pi, auth, credential) {
 }
 
 function accountEnvForRefresh(name) {
-  if (name === 'live') return { home: os.homedir(), env: process.env };
   const home = accountHome(name);
   const env = { ...process.env, HOME: home, AGY_CREW_HOME: process.env.AGY_CREW_HOME };
   if (process.platform === 'win32') env.USERPROFILE = home;

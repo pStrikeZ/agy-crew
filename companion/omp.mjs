@@ -20,7 +20,7 @@ import { warmUp } from './pool/quota.mjs';
 const DEFAULT_FAMILY = 'gemini-3.8-flash';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
 
-const OMP_USAGE = `usage: ${PRODUCT} omp [--account auto|<name>|live] [--family <family>] [-- <omp args>...]`;
+const OMP_USAGE = `usage: ${PRODUCT} omp [--account auto|<name>] [--family <family>] [-- <omp args>...]`;
 
 function parseOmpArgs(rest, defaultFamily) {
   let account = 'auto';
@@ -67,7 +67,6 @@ function modelArg(args) {
 }
 
 function chooseForOmp(pool, requested, family, now) {
-  if (requested === 'live') return { name: 'live', email: null };
   if (!pool.accounts.length) {
     return { refused: `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\` first.` };
   }
@@ -105,7 +104,6 @@ function acquire(requested, family) {
   const outcome = updatePool((pool) => {
     const picked = chooseForOmp(pool, requested, family, now);
     if (picked.refused) return { refused: picked.refused };
-    if (picked.name === 'live') return { picked };
     const account = findAccount(pool, picked.name);
     const hold = {
       id: randomUUID().slice(0, 8),
@@ -189,7 +187,7 @@ function ompHelp() {
 Run omp with one agy-crew pool account. The account is held until omp exits;
 the bundled omp extension seeds its credential and rewrites omp's block-0 role.
 
-  --account auto|<name>|live   auto by default; live skips the pool
+  --account auto|<name>        auto by default
   --family <family>            quota family for selection (default ${DEFAULT_FAMILY})
   -- <omp args>...             passed to omp unchanged
 
@@ -209,13 +207,13 @@ export async function cmdOmp(rest, deps) {
   }
   const picked = acquire(account, family);
   try {
-    if (picked.name !== 'live') await ensureFresh(picked.name, deps.agyCommand);
+    await ensureFresh(picked.name, deps.agyCommand);
     const env = {
       AGY_CREW_HOME: globalHome(),
       AGY_CREW_OMP_ACCOUNT: picked.name,
       AGY_CREW_OMP_FAMILY: family,
     };
-    if (picked.holdId) env.AGY_CREW_OMP_HOLD = picked.holdId;
+    env.AGY_CREW_OMP_HOLD = picked.holdId;
     return await runOmp(args, env);
   } finally {
     release(picked.holdId);

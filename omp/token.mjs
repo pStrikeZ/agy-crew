@@ -34,14 +34,9 @@ function expiryMs(raw) {
 
 /** Raw token fields for one account, or null when the file is absent/unreadable. */
 export function readOmpToken(name) {
-  return readOmpTokenAt(accountHome(name));
-}
-
-/** Token fields from an arbitrary HOME (used for the unpooled `live` login). */
-export function readOmpTokenAt(home) {
   let json;
   try {
-    json = JSON.parse(fs.readFileSync(tokenPath(home), 'utf8'));
+    json = JSON.parse(fs.readFileSync(tokenPath(accountHome(name)), 'utf8'));
   } catch {
     return null;
   }
@@ -61,13 +56,8 @@ export function readOmpTokenAt(home) {
 
 /** The Cloud Code project agy last used for this account, if cached. */
 export function readCachedProject(name) {
-  return readCachedProjectAt(accountHome(name));
-}
-
-/** Cached Cloud Code project for an arbitrary HOME. */
-export function readCachedProjectAt(home) {
   try {
-    const value = fs.readFileSync(projectCachePath(home), 'utf8').trim();
+    const value = fs.readFileSync(projectCachePath(accountHome(name)), 'utf8').trim();
     return value.length > 0 ? value : null;
   } catch {
     return null;
