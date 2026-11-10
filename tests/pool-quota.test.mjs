@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { run, sandbox } from './helpers.mjs';
+import { FAKE_AGY, run, sandbox } from './helpers.mjs';
 import { FAMILY, accountHomeOf, readPool, runAsync, seedPool, tokenFileOf, tokenJson, writePool } from './pool-helpers.mjs';
-import { clientUserAgent } from '../companion/pool/quota.mjs';
+import { clientUserAgent, warmUp } from '../companion/pool/quota.mjs';
 
 const SUMMARY = { groups: [
   { displayName: 'Gemini models', buckets: [
@@ -198,4 +198,25 @@ test('clientUserAgent mirrors agy and falls back to a known version', () => {
   assert.equal(clientUserAgent(fake('1.4.9\n'), { platform: 'linux', arch: 'x64' }), 'antigravity/cli/1.4.9 (aidev_client; os_type=linux; arch=amd64)');
   assert.equal(clientUserAgent(fake('agy version 2.0.1-rc.1\n'), { platform: 'win32', arch: 'arm64' }), 'antigravity/cli/2.0.1-rc.1 (aidev_client; os_type=windows; arch=arm64)');
   assert.match(clientUserAgent(fake('', 1), { platform: 'darwin', arch: 'arm64' }), /^antigravity\/cli\/\d+\.\d+\.\d+ \(aidev_client; os_type=darwin; arch=arm64\)$/);
+});
+
+test('warmUp stops agy once the token changes instead of waiting for the print turn', async () => {
+  const sb = sandbox('warmup-early');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const home = accountHomeOf(sb, 'a');
+  const previous = process.env.FAKE_AGY_NEW_ACCESS_TOKEN;
+  const previousAfter = process.env.FAKE_AGY_AFTER_RESULT_MS;
+  process.env.FAKE_AGY_NEW_ACCESS_TOKEN = 'renewed';
+  process.env.FAKE_AGY_AFTER_RESULT_MS = '5000';
+  try {
+    const started = Date.now();
+    await warmUp(home, (args) => ({ cmd: process.execPath, args: [FAKE_AGY, ...args] }));
+    assert.ok(Date.now() - started < 2000, 'returned after the token file changed, not after agy exited');
+    assert.equal(JSON.parse(fs.readFileSync(tokenFileOf(sb, 'a'), 'utf8')).token.access_token, 'renewed');
+  } finally {
+    if (previous === undefined) delete process.env.FAKE_AGY_NEW_ACCESS_TOKEN;
+    else process.env.FAKE_AGY_NEW_ACCESS_TOKEN = previous;
+    if (previousAfter === undefined) delete process.env.FAKE_AGY_AFTER_RESULT_MS;
+    else process.env.FAKE_AGY_AFTER_RESULT_MS = previousAfter;
+  }
 });

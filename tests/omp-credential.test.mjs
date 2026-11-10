@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { OmpCredentialError, readOmpCredential } from '../omp/credential.mjs';
+import { OmpCredentialError, readOmpCredential, readOmpCredentialCached } from '../omp/credential.mjs';
 import { accountHomeOf, globalHomeOf, seedPool, tokenFileOf, tokenJson } from './pool-helpers.mjs';
 import { sandbox } from './helpers.mjs';
 
@@ -30,6 +30,7 @@ test('readOmpCredential maps access, refresh, expiry, email and project', async 
     seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
     writeProject(sb, 'a');
     const credential = await readOmpCredential('a');
+  assert.equal(readOmpCredentialCached('a').projectId, PROJECT);
   assert.equal(credential.type, 'oauth');
   assert.equal(credential.access, 'fake-access');
   assert.equal(credential.refresh, 'fake-refresh');
@@ -62,5 +63,18 @@ test('readOmpCredential refuses an account without an email identity', async () 
     delete json.token.id_token;
     fs.writeFileSync(tokenFileOf(sb, 'a'), JSON.stringify(json));
     await assert.rejects(() => readOmpCredential('a'), /no email identity/);
+  } finally { restore(); }
+});
+
+test('readOmpCredential caches a discovered project for synchronous registration', async () => {
+  const sb = sandbox();
+  const restore = useSandboxHome(sb);
+  try {
+    seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
+    const credential = await readOmpCredential('a', {
+      fetchImpl: async () => ({ ok: true, json: async () => ({ cloudaicompanionProject: { id: 'discovered-project' } }) }),
+    });
+    assert.equal(credential.projectId, 'discovered-project');
+    assert.equal(readOmpCredentialCached('a').projectId, 'discovered-project');
   } finally { restore(); }
 });

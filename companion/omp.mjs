@@ -16,38 +16,39 @@ import { activeCooldown, chooseLender, exhaustedSnapshot, findAccount } from './
 import { modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { warmUp } from './pool/quota.mjs';
+import { readOmpCredential } from '../omp/credential.mjs';
 
 const DEFAULT_FAMILY = 'gemini-3.8-flash';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
 
-const OMP_USAGE = `usage: ${PRODUCT} omp [--account auto|<name>] [--family <family>] [-- <omp args>...]`;
+const OMP_USAGE = `usage: ${PRODUCT} omp [<name>] [--family <family>] [-- <omp args>...]`;
 
 function parseOmpArgs(rest, defaultFamily) {
-  let account = 'auto';
+  const split = rest.indexOf('--');
+  const own = split < 0 ? rest : rest.slice(0, split);
+  const args = split < 0 ? [] : rest.slice(split + 1);
+  let account = null;
   let family = modelFamily(defaultFamily || DEFAULT_FAMILY);
   let familyExplicit = false;
   let help = false;
-  const args = [];
-  for (let i = 0; i < rest.length; i++) {
-    const value = rest[i];
-    if (value === '--') {
-      args.push(...rest.slice(i + 1));
-      break;
-    }
+  for (let i = 0; i < own.length; i++) {
+    const value = own[i];
     if (value === '--help' || value === '-h') help = true;
-    else if (value === '--account' || value === '-a') {
-      account = rest[++i];
-      if (!account || account.startsWith('-')) throw new PoolError('flag --account needs a value');
-    } else if (value.startsWith('--account=')) account = value.slice('--account='.length);
     else if (value === '--family') {
-      family = rest[++i];
+      family = own[++i];
       if (!family || family.startsWith('-')) throw new PoolError('flag --family needs a value');
       family = modelFamily(family);
       familyExplicit = true;
     } else if (value.startsWith('--family=')) {
       family = modelFamily(value.slice('--family='.length));
       familyExplicit = true;
-    } else args.push(value);
+    } else if (value.startsWith('-')) {
+      throw new PoolError(`unknown flag ${value} (${OMP_USAGE}; omp's own flags go after --)`);
+    } else if (account) {
+      throw new PoolError(OMP_USAGE);
+    } else {
+      account = value;
+    }
   }
 
   const model = modelArg(args);
@@ -55,7 +56,7 @@ function parseOmpArgs(rest, defaultFamily) {
     const parsed = model ? modelFamily(String(model).split('/').pop()) : null;
     if (parsed) family = parsed;
   }
-  return { account, family, args, help };
+  return { account: account || 'auto', family, args, help };
 }
 
 function modelArg(args) {
@@ -142,6 +143,9 @@ async function ensureFresh(name, agyCommand) {
   if (!after?.access_token) {
     throw new PoolError(`account ${name} needs login (${PRODUCT} accounts login ${name})`);
   }
+  if (after.expiry_ms && after.expiry_ms - Date.now() <= 120_000) {
+    throw new PoolError(`account ${name} could not refresh its credential; run \`${PRODUCT} accounts login ${name}\` or try again`);
+  }
 }
 
 function ompCommand(args) {
@@ -187,7 +191,7 @@ function ompHelp() {
 Run omp with one agy-crew pool account. The account is held until omp exits;
 the bundled omp extension seeds its credential and rewrites omp's block-0 role.
 
-  --account auto|<name>        auto by default
+  <name>                       pool account; auto by default
   --family <family>            quota family for selection (default ${DEFAULT_FAMILY})
   -- <omp args>...             passed to omp unchanged
 
@@ -208,10 +212,24 @@ export async function cmdOmp(rest, deps) {
   const picked = acquire(account, family);
   try {
     await ensureFresh(picked.name, deps.agyCommand);
+    // Resolve and cache the Cloud Code project before omp starts. The extension
+    // registers a synchronous credential at load time; without the cached
+    // project, model discovery would see no credential and fall back.
+    try {
+      await readOmpCredential(picked.name);
+    } catch (error) {
+      throw new PoolError(error?.message || String(error));
+    }
     const env = {
       AGY_CREW_HOME: globalHome(),
       AGY_CREW_OMP_ACCOUNT: picked.name,
       AGY_CREW_OMP_FAMILY: family,
+      // Antigravity Flash carries a 60s first-event budget in omp's catalog.
+      // A cold Gemini start can exceed it, and omp then aborts the turn with
+      // "Request was aborted" before any token arrives. Give the bridge the
+      // same five-minute budget omp uses for other providers; an explicit
+      // user setting still wins.
+      PI_STREAM_FIRST_EVENT_TIMEOUT_MS: process.env.PI_STREAM_FIRST_EVENT_TIMEOUT_MS ?? '300000',
     };
     env.AGY_CREW_OMP_HOLD = picked.holdId;
     return await runOmp(args, env);

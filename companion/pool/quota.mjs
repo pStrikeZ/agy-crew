@@ -27,14 +27,49 @@ export function clientUserAgent(agyCommand, { platform = process.platform, arch 
   return `antigravity/cli/${version || FALLBACK_AGY_VERSION} (aidev_client; os_type=${AGY_OS[platform] || platform}; arch=${AGY_ARCH[arch] || arch})`;
 }
 
-/** Run agy once so it refreshes the file-backed token itself. Async, so the
- *  progress line keeps drawing meanwhile. */
+const WARM_UP_TIMEOUT_MS = 30_000;
+const WARM_UP_POLL_MS = 100;
+
+const tokenChanged = (before, after) => {
+  if (!after?.access_token) return false;
+  if (!before?.access_token) return true;
+  if (after.access_token !== before.access_token) return true;
+  return Boolean(after.expiry_ms && before.expiry_ms && after.expiry_ms > before.expiry_ms);
+};
+
+/** Run agy once so it refreshes the file-backed token itself, then stop it as
+ *  soon as the token file changes. A real agy can refresh the token in a few
+ *  hundred milliseconds but keep the print turn open indefinitely; waiting for
+ *  the process to exit would make every refresh look like a timeout. Async so
+ *  the progress line keeps drawing meanwhile. */
 export async function warmUp(home, agyCommand) {
+  const before = readToken(home);
   const agy = agyCommand(['-p', 'reply with one word: pong', '--output-format', 'json']);
   return new Promise((resolve) => {
-    const child = spawn(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), stdio: 'ignore', timeout: 60_000, windowsHide: true });
-    child.on('error', resolve);
-    child.on('close', resolve);
+    let settled = false;
+    let poll = null;
+    let deadline = null;
+    let child = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (poll) clearInterval(poll);
+      if (deadline) clearTimeout(deadline);
+      try { child?.kill(); } catch { /* already gone */ }
+      resolve();
+    };
+    try {
+      child = spawn(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), stdio: 'ignore', timeout: WARM_UP_TIMEOUT_MS, windowsHide: true });
+    } catch {
+      finish();
+      return;
+    }
+    child.on('error', finish);
+    child.on('close', finish);
+    poll = setInterval(() => {
+      if (tokenChanged(before, readToken(home))) finish();
+    }, WARM_UP_POLL_MS);
+    deadline = setTimeout(finish, WARM_UP_TIMEOUT_MS);
   });
 }
 

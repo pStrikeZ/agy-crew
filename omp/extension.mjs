@@ -10,8 +10,8 @@
  *   3. replaces omp's block-0 role sentence with the upstream Antigravity
  *      identity and strips the omp/cfg/omp URL fingerprints.
  */
-import { spawn } from 'node:child_process';
-import { readOmpCredential, toStructuredApiKey } from './credential.mjs';
+import { readOmpCredential, readOmpCredentialCached, toStructuredApiKey } from './credential.mjs';
+import { warmUp } from '../companion/pool/quota.mjs';
 import { accountHome } from './paths.mjs';
 import { IDENTITY_SENTINEL, identityText, sanitizeTools, transformBlock0 } from './prompt.mjs';
 
@@ -42,44 +42,25 @@ function installRuntimeKey(pi, auth, credential) {
   }
 }
 
-function accountEnvForRefresh(name) {
-  const home = accountHome(name);
-  const env = { ...process.env, HOME: home, AGY_CREW_HOME: process.env.AGY_CREW_HOME };
-  if (process.platform === 'win32') env.USERPROFILE = home;
-  env.SSH_CONNECTION = '127.0.0.1 1 127.0.0.1 1';
-  env.SSH_CLIENT = '127.0.0.1 1 1';
-  env.SSH_TTY = 'agy-crew-omp';
-  return { home, env };
-}
-
-/** Let agy refresh the file-backed token, then update the runtime bearer. */
-function refreshRuntimeKey(pi, auth) {
-  if (!ACCOUNT) return;
-  const { home, env } = accountEnvForRefresh(ACCOUNT);
+/** Let agy refresh the file-backed token, then update the runtime bearer.
+ *  `warmUp` stops agy once the token file changes; a real agy can keep the
+ *  print turn open long after the credential is already usable. */
+async function refreshRuntimeKey(pi, auth) {
+  if (!ACCOUNT) return null;
+  const home = accountHome(ACCOUNT);
   const bin = process.env.AGY_BIN || 'agy';
-  const child = spawn(bin, ['-p', 'reply with one word: pong', '--output-format', 'json'], {
-    cwd: home,
-    env,
-    stdio: 'ignore',
-    timeout: 60_000,
-    windowsHide: true,
-  });
-  child.on('error', () => scheduleRefresh(pi, auth, 60_000));
-  child.on('exit', async (code) => {
-    if (code !== 0) {
-      scheduleRefresh(pi, auth, 60_000);
-      return;
-    }
-    try {
-      const credential = await readOmpCredential(ACCOUNT);
-      currentCredential = credential;
-      installRuntimeKey(pi, auth, credential);
-      scheduleRefresh(pi, auth);
-    } catch (error) {
-      pi.logger?.warn?.(`agy-crew omp: runtime credential refresh failed: ${error?.message || String(error)}`);
-      scheduleRefresh(pi, auth, 60_000);
-    }
-  });
+  await warmUp(home, (args) => ({ cmd: bin, args }));
+  try {
+    const credential = await readOmpCredential(ACCOUNT);
+    currentCredential = credential;
+    installRuntimeKey(pi, auth, credential);
+    scheduleRefresh(pi, auth);
+    return credential;
+  } catch (error) {
+    pi.logger?.warn?.(`agy-crew omp: runtime credential refresh failed: ${error?.message || String(error)}`);
+    scheduleRefresh(pi, auth, 60_000);
+    return null;
+  }
 }
 
 /** Refresh before the access token expires; the timer is unref'd so it cannot hold omp open. */
@@ -122,7 +103,16 @@ export default function agyCrewOmp(pi) {
   // omp ships google-antigravity paused (`providerDisabledReason`). Registering
   // an OAuth provider under the same id is the documented escape hatch: it takes
   // the id back for this opt-in run without changing normal omp behavior.
+  //
+  // The fallback `apiKey` is read synchronously at factory time so model
+  // discovery sees a credential before `session_start` runs. Without it, omp
+  // reports the role default as unavailable and falls back to another provider.
+  const bootstrap = (() => {
+    try { return readOmpCredentialCached(ACCOUNT); } catch { return null; }
+  })();
+  if (bootstrap) currentCredential = bootstrap;
   pi.registerProvider(PROVIDER, {
+    ...(bootstrap ? { apiKey: toStructuredApiKey(bootstrap) } : {}),
     oauth: {
       name: 'Google Antigravity (agy-crew)',
       async login() {

@@ -6,6 +6,7 @@
  * and email; the omp bridge needs the refresh token and expiry too.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 import { accountHome, loadPool, projectCachePath, tokenPath } from './paths.mjs';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
@@ -61,6 +62,18 @@ export function readCachedProject(name) {
     return value.length > 0 ? value : null;
   } catch {
     return null;
+  }
+}
+
+/** Remember the project discovered for this account so model registration can
+ *  use it synchronously on the next start. */
+export function writeCachedProject(name, projectId) {
+  try {
+    const file = projectCachePath(accountHome(name));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, String(projectId).trim() + '\n');
+  } catch {
+    // Best effort; omp can still discover it at session_start.
   }
 }
 

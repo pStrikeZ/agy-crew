@@ -65,6 +65,9 @@ test('session_start installs the selected account as the runtime key', async () 
   init({ on(name, fn) { handlers.set(name, fn); }, registerProvider(name, config) { providers.push({ name, config }); }, logger: { warn() {} } });
   assert.equal(providers[0].name, 'google-antigravity');
   assert.ok(providers[0].config.oauth);
+  const bootstrap = JSON.parse(providers[0].config.apiKey);
+  assert.equal(bootstrap.projectId, 'project-a');
+  assert.equal(bootstrap.email, 'a@example.com');
 
   const runtime = [];
   const auth = { keys: { setRuntime: (provider, key) => runtime.push({ provider, key }) } };

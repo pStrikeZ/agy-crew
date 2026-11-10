@@ -2190,7 +2190,7 @@ Accounts
                                             with the credential of <name>, or of an idle account
                                             that has quota for --model. The account is held
                                             until agy exits
-  omp [--account auto|<name>] [--family <f>] [-- <omp args>]
+  omp [<name>] [--family <f>] [-- <omp args>]
                                             run omp on one held pool account; the bundled
                                             omp extension seeds the credential and rewrites
                                             omp's block-0 role. Requires the omp plugin

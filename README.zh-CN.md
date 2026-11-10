@@ -224,8 +224,8 @@ omp plugin install agy-crew
 然后用 `agy-crew omp` 启动。它复用 `chooseAccount` 选号，持有该账号直到 omp 退出，并把账号名写进环境变量供插件读取：
 
 ```bash
-agy-crew omp --account work1 -- --model google-antigravity/gemini-3.8-flash
-agy-crew omp --account auto  -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp work1 -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp       -- --model google-antigravity/gemini-3.8-flash
 ```
 
 `--` 之后是 omp 自己的参数，原样传递。omp 默认把 `google-antigravity` 标记为 paused（“Google may restrict accounts that use Antigravity outside its own apps”）；插件只在 `agy-crew omp` 环境下注册一个同名 OAuth provider 取回该 id，并把选中账号作为 **runtime bearer** 注入（不写 `agent.db`、不建 profile、不 restrict session），由后台 agy warm-up 在过期前刷新。`before_agent_start` 删除 omp block 0 的 `§ Role / You are omp's trusted coding assistant.` 和 `cfg://`/`omp://` 入口，换成 Antigravity 的 `identity.tmpl`，其余工具描述、skills、rules、footer 保留；`before_provider_request` 还会清掉工具声明里的 `omp://` 示例。
