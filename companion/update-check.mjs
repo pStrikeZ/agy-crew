@@ -1,10 +1,11 @@
 /**
  * Daily npm update check for interactive CLI use.
  *
- * The check is deliberately outside the agent path: only `start` and the
- * full-screen `inspect` TUI qualify, and both must have a TTY. Skill-driven
- * calls (`staffer`, `wait`, `accounts list --json`, ...) never read the cache,
- * touch the network, or print anything.
+ * The check is deliberately outside the agent path: `start`, the full-screen
+ * `inspect` TUI, and the human-facing `accounts list` / `accounts quota` table
+ * qualify. Every candidate must have a TTY and must not carry a known coding-
+ * harness marker in its environment, so skill-driven calls never read the
+ * cache, touch the network, or print anything.
  *
  * At most one registry request is made per 24 hours. The result is cached in
  * <globalHome>/update-check.json so later interactive runs can notify without
@@ -19,6 +20,25 @@ import { replaceFile } from './state-lock.mjs';
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const UPDATE_CHECK_TIMEOUT_MS = 1200;
 const CACHE_SCHEMA = 1;
+
+/** Environment variables set by coding harnesses for their shell/tool
+ *  subprocesses. A user's own terminal does not have them. */
+export const HARNESS_ENV_MARKERS = [
+  'AGENT',
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_SSE_PORT',
+  'CODEX_SANDBOX',
+  'CODEX_CI',
+  'CODEX_THREAD_ID',
+  'CODEX_MANAGED_BY_NPM',
+  'OMPCODE',
+  'PI_SESSION_FILE',
+  'PI_SESSION_ID',
+  'PI_TOOL_CALL_ID',
+  'OPENCODE',
+  'OPENCODE_BIN_PATH',
+];
 
 export function updateCacheFile() {
   return path.join(globalHome(), 'update-check.json');
@@ -144,6 +164,12 @@ export async function checkForUpdate({
   return notice;
 }
 
+/** True when the process looks like it was started by a coding harness rather
+ *  than from the user's own shell. */
+export function isHarnessInvocation(env = process.env) {
+  return HARNESS_ENV_MARKERS.some((key) => Boolean(env[key]));
+}
+
 /** True only for the human-facing interactive commands. Agent skill calls use
  *  task/status commands, and never pass this gate. */
 export function isInteractiveUpdateCheck(cmd, rest = [], {
@@ -153,8 +179,14 @@ export function isInteractiveUpdateCheck(cmd, rest = [], {
 } = {}) {
   if (!stdinIsTTY || !stdoutIsTTY) return false;
   if (env.AGY_CREW_NO_UPDATE_CHECK === '1') return false;
+  if (isHarnessInvocation(env)) return false;
   if (cmd === 'start') return true;
   if (cmd === 'inspect') return !rest.includes('--plain') && !rest.includes('--no-follow');
+  if (cmd === 'accounts') {
+    if (rest.includes('--json')) return false;
+    const subcommand = rest.find((arg) => !arg.startsWith('-'));
+    return subcommand === 'list' || subcommand === 'quota';
+  }
   return false;
 }
 

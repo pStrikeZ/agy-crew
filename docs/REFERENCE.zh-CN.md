@@ -641,7 +641,7 @@ Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew
 
 Pi 的 Git 安装跟随所配置的分支或引用，本地路径安装则直接读取检出目录。没有固定版本的 Git 安装可以运行 `pi update --extension git:github.com/pStrikeZ/agy-crew`，然后在 Pi 中执行 `/reload`。
 
-用户交互运行 `agy-crew start` 或全屏 `agy-crew inspect` 时，每 24 小时最多查询一次 npm registry；发现新版本会打印一行提示。非 TTY 调用和 skill 发起的命令完全跳过检查，详见上方的 `AGY_CREW_NO_UPDATE_CHECK`。
+用户交互运行 `agy-crew start`、全屏 `agy-crew inspect`，或查看 `accounts list` / `accounts quota` 表格时，每 24 小时最多查询一次 npm registry；发现新版本会打印一行提示。候选调用必须 stdin 和 stdout 都是 TTY，且环境中没有已知的 coding harness 标记；skill 发起的命令因此完全跳过检查。详见上方的 `AGY_CREW_NO_UPDATE_CHECK`。
 
 本地开发时，在检出目录运行 `npm run generate:pi`，再执行 `/reload` 即可加载技能修改，无需先推送到远端。
 

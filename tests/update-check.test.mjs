@@ -8,6 +8,7 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
   checkForUpdate,
   compareVersions,
+  isHarnessInvocation,
   isInteractiveUpdateCheck,
   maybeNotifyUpdate,
   readUpdateCache,
@@ -37,20 +38,37 @@ test('a notice is produced only when the registry version is newer', () => {
   assert.equal(updateNotice('0.9.12', '0.9.12-beta.1'), null);
 });
 
-test('the interactive gate accepts only start and the full-screen inspect', () => {
+test('the interactive gate accepts start, inspect, and human account tables', () => {
   const tty = { stdinIsTTY: true, stdoutIsTTY: true, env: {} };
   assert.equal(isInteractiveUpdateCheck('start', [], tty), true);
   assert.equal(isInteractiveUpdateCheck('inspect', [], tty), true);
   assert.equal(isInteractiveUpdateCheck('inspect', ['--plain'], tty), false);
   assert.equal(isInteractiveUpdateCheck('inspect', ['--no-follow'], tty), false);
+  assert.equal(isInteractiveUpdateCheck('accounts', ['list'], tty), true);
+  assert.equal(isInteractiveUpdateCheck('accounts', ['quota'], tty), true);
+  assert.equal(isInteractiveUpdateCheck('accounts', ['quota', '--refresh'], tty), true);
+  assert.equal(isInteractiveUpdateCheck('accounts', ['list', '--json'], tty), false);
 
   // Agent skill commands never qualify, even in a terminal.
-  for (const cmd of ['staffer', 'research', 'review', 'implement', 'ask', 'wait', 'status', 'accounts']) {
+  for (const cmd of ['staffer', 'research', 'review', 'implement', 'ask', 'wait', 'status']) {
     assert.equal(isInteractiveUpdateCheck(cmd, [], tty), false, cmd);
   }
+  assert.equal(isInteractiveUpdateCheck('accounts', [], tty), false);
   assert.equal(isInteractiveUpdateCheck('start', [], { ...tty, stdinIsTTY: false }), false);
   assert.equal(isInteractiveUpdateCheck('start', [], { ...tty, stdoutIsTTY: false }), false);
   assert.equal(isInteractiveUpdateCheck('start', [], { ...tty, env: { AGY_CREW_NO_UPDATE_CHECK: '1' } }), false);
+});
+
+test('known harness environments are excluded even on a TTY', () => {
+  const tty = { stdinIsTTY: true, stdoutIsTTY: true };
+  for (const marker of ['AGENT', 'CLAUDECODE', 'CODEX_SANDBOX', 'CODEX_THREAD_ID', 'OMPCODE', 'PI_SESSION_ID', 'OPENCODE']) {
+    const env = { [marker]: '1' };
+    assert.equal(isHarnessInvocation(env), true, marker);
+    assert.equal(isInteractiveUpdateCheck('accounts', ['list'], { ...tty, env }), false, marker);
+    assert.equal(isInteractiveUpdateCheck('start', [], { ...tty, env }), false, marker);
+  }
+  assert.equal(isHarnessInvocation({}), false);
+  assert.equal(isHarnessInvocation({ TERM_PROGRAM: 'vscode' }), false);
 });
 
 test('a fresh cache notifies without another registry request', async () => {

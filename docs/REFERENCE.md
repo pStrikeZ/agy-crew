@@ -533,7 +533,7 @@ Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `
 - **OpenCode** — use a newer Git tag/commit in the native plugin installer with `--force`, then restart; see [OpenCode](#opencode).
 - **Pi** — for an unpinned Git install, run `pi update --extension git:github.com/pStrikeZ/agy-crew`, then `/reload`. For local development, regenerate Pi skills (`npm run generate:pi`) and run `/reload`; no push is needed.
 
-Interactive `agy-crew start` and the full-screen `agy-crew inspect` check the npm registry at most once per 24 hours and print a one-line notice when `agy-crew` has a newer release. The check is skipped entirely for non-TTY and skill-driven commands; see `AGY_CREW_NO_UPDATE_CHECK` above.
+Interactive `agy-crew start`, the full-screen `agy-crew inspect`, and the human-facing `accounts list` / `accounts quota` tables check the npm registry at most once per 24 hours and print a one-line notice when `agy-crew` has a newer release. A candidate needs both stdin and stdout on a TTY and must not carry a known coding-harness environment marker; skill-driven commands are therefore skipped entirely. See `AGY_CREW_NO_UPDATE_CHECK` above.
 
 You can check which commit is actually installed: the `gitCommitSha` in `~/.claude/plugins/installed_plugins.json`, versus `git -C ~/.claude/plugins/marketplaces/agy-crew log -1` for what the marketplace clone has fetched.
 
