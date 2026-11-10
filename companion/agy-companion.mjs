@@ -115,6 +115,7 @@ import { atomicJSON, runStreaming, processIdentity } from './stream-worker.mjs';
 import { withStateLock, replaceFile, readTextRetry } from './state-lock.mjs';
 import { cmdAccounts, cmdStart, poolSettingsFiles } from './accounts.mjs';
 import { cmdOmp } from './omp.mjs';
+import { maybeNotifyUpdate, isInteractiveUpdateCheck } from './update-check.mjs';
 import { acquireRun, boundAccount, preflight, recordCooldown, markAuthError } from './pool/lease.mjs';
 import { classifyFailureText, isCooldownReason, modelFamily } from './pool/results.mjs';
 import { loadPool, updatePool, poolExists } from './pool/state.mjs';
@@ -2189,7 +2190,7 @@ Accounts
                                             with the credential of <name>, or of an idle account
                                             that has quota for --model. The account is held
                                             until agy exits
-  omp [--account auto|<name>|live] [--family <f>] [-- <omp args>]
+  omp [--account auto|<name>] [--family <f>] [-- <omp args>]
                                             run omp on one held pool account; the bundled
                                             omp extension seeds the credential and rewrites
                                             omp's block-0 role. Requires the omp plugin
@@ -2229,7 +2230,7 @@ function cmdVersion() {
   process.stdout.write(`${PRODUCT} ${VERSION}\nagy ${agyVersion}\n`);
 }
 
-function main() {
+async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd) {
     process.stderr.write(HELP);
@@ -2238,6 +2239,7 @@ function main() {
   }
   if (['help', '--help', '-h'].includes(cmd)) return void process.stdout.write(HELP);
   if (['version', '--version', '-v'].includes(cmd)) return cmdVersion();
+  if (isInteractiveUpdateCheck(cmd, rest)) await maybeNotifyUpdate({ currentVersion: VERSION });
   if (cmd === 'start') {
     return cmdStart(rest, { agyCommand, liveSettings: AGY_SETTINGS, defaultModel: DEFAULTS.model.staffer })
       .then((code) => { process.exitCode = code; });

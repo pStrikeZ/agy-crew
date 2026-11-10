@@ -277,6 +277,8 @@ agy-crew uninstall --all && npm uninstall -g agy-crew
 
 如果是 `npm link` 的检出目录，运行 `git pull`，再运行 `agy-crew install` 刷新 bundle。
 
+用户交互运行 `agy-crew start` 或全屏 `agy-crew inspect` 时，每天最多检查一次 npm；发现有更新会打印一行升级提示。agent 通过 skill 发起的调用不会检查、不会等待，也不会写入任何内容。设置 `AGY_CREW_NO_UPDATE_CHECK=1` 可关闭检查；结果缓存在 `~/.agy-crew/update-check.json`。
+
 路线 A′（git clone）：
 
 ```bash

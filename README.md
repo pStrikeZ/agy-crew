@@ -189,6 +189,8 @@ agy-crew uninstall --all && npm uninstall -g agy-crew
 
 For a `npm link` checkout, `git pull` then `agy-crew install` refreshes the bundle.
 
+Interactive `agy-crew start` and the full-screen `agy-crew inspect` check npm at most once a day. When a newer release exists they print a one-line upgrade notice. Skill-driven calls never check, wait, or write anything. Disable the check with `AGY_CREW_NO_UPDATE_CHECK=1`; the result is cached in `~/.agy-crew/update-check.json`.
+
 Route A′ (git clone):
 
 ```bash

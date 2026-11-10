@@ -331,6 +331,7 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
 | `AGY_CREW_ACCOUNT` | Default for `--account` (`auto`, `live` or an account name) |
 | `AGY_CREW_HOME` | Moves the global directory `~/.agy-crew/`, including the pool and its accounts |
 | `AGY_CREW_CLOUDCODE_URL` | Replaces the default `https://cloudcode-pa.googleapis.com` base URL for `accounts quota --refresh` (tests, proxies) |
+| `AGY_CREW_NO_UPDATE_CHECK` | `1` disables the daily npm update check on interactive `start` / full-screen `inspect` |
 
 ### State layout
 
@@ -342,6 +343,7 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
     .gemini/antigravity-cli/antigravity-oauth-token   file-backed token (never printed)
     .gemini/antigravity-cli/settings.json             permissions for this account
   enroll/<random>/home/          staging directory during a first login
+  update-check.json              daily npm update-check cache (latest, checked_at, notified_version)
 ```
 
 `pool.json` holds `accounts` (insertion order is the final tie-break), `cooldowns` (keyed `<name>|<family>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
@@ -531,6 +533,8 @@ Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `
 - **OpenCode** — use a newer Git tag/commit in the native plugin installer with `--force`, then restart; see [OpenCode](#opencode).
 - **Pi** — for an unpinned Git install, run `pi update --extension git:github.com/pStrikeZ/agy-crew`, then `/reload`. For local development, regenerate Pi skills (`npm run generate:pi`) and run `/reload`; no push is needed.
 
+Interactive `agy-crew start` and the full-screen `agy-crew inspect` check the npm registry at most once per 24 hours and print a one-line notice when `agy-crew` has a newer release. The check is skipped entirely for non-TTY and skill-driven commands; see `AGY_CREW_NO_UPDATE_CHECK` above.
+
 You can check which commit is actually installed: the `gitCommitSha` in `~/.claude/plugins/installed_plugins.json`, versus `git -C ~/.claude/plugins/marketplaces/agy-crew log -1` for what the marketplace clone has fetched.
 
 ## Repository layout
@@ -544,6 +548,7 @@ companion/pool/                account pool: state, selection, loans, quota, cla
 companion/stream-worker.mjs    streaming execution, process cleanup and deadlines
 companion/observation.mjs      event parsing, progress snapshots and output budgets
 companion/state-lock.mjs       state-write locking and stale-lock recovery
+companion/update-check.mjs     daily npm update check for interactive `start` / `inspect`
 templates/                    shared prompt templates (staffer/ask/research/review/implement) and harness-compatibility.md
 .claude-plugin/               Claude Code plugin + self-hosting marketplace manifests
 .codex-plugin/plugin.json     Codex plugin manifest

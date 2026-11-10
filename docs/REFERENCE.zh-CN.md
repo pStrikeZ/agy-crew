@@ -381,6 +381,7 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
 | `AGY_CREW_ACCOUNT` | `--account` 的默认值（`auto`、`live` 或账号名） |
 | `AGY_CREW_HOME` | 移动全局目录 `~/.agy-crew/`，其中包括账号池及各账号 |
 | `AGY_CREW_CLOUDCODE_URL` | 替换 `accounts quota --refresh` 使用的默认地址 `https://cloudcode-pa.googleapis.com`（用于测试或代理） |
+| `AGY_CREW_NO_UPDATE_CHECK` | 设为 `1` 可关闭交互式 `start` / 全屏 `inspect` 的每日 npm 更新检查 |
 
 ### 状态目录
 
@@ -392,6 +393,7 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
     .gemini/antigravity-cli/antigravity-oauth-token   文件形式的令牌（不会被打印）
     .gemini/antigravity-cli/settings.json             该账号的权限设置
   enroll/<随机名>/home/          首次登录期间的暂存目录
+  update-check.json              每日 npm 更新检查缓存（latest、checked_at、notified_version）
 ```
 
 `pool.json` 包含 `accounts`（添加顺序是最后的排序依据）、`cooldowns`（键为 `<name>|<family>`）、`leases`、`conversations`（会话 ID 到账号的映射）、`loans` 和 `quota` 快照。写入是原子的，并且加锁。文件不存在等同于空池；文件损坏会报错，不会被自动重置；`schema` 比当前版本新时会拒绝使用（`pool.json was written by a newer agy-crew`）。
@@ -639,6 +641,8 @@ Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew
 
 Pi 的 Git 安装跟随所配置的分支或引用，本地路径安装则直接读取检出目录。没有固定版本的 Git 安装可以运行 `pi update --extension git:github.com/pStrikeZ/agy-crew`，然后在 Pi 中执行 `/reload`。
 
+用户交互运行 `agy-crew start` 或全屏 `agy-crew inspect` 时，每 24 小时最多查询一次 npm registry；发现新版本会打印一行提示。非 TTY 调用和 skill 发起的命令完全跳过检查，详见上方的 `AGY_CREW_NO_UPDATE_CHECK`。
+
 本地开发时，在检出目录运行 `npm run generate:pi`，再执行 `/reload` 即可加载技能修改，无需先推送到远端。
 
 ## 仓库结构
@@ -654,6 +658,7 @@ companion/pool/                账号池：状态、选择、借用、配额、�
 companion/stream-worker.mjs    AGY 流式执行、进程清理与执行时限
 companion/observation.mjs      事件解析、进度快照与输出长度限制
 companion/state-lock.mjs       状态更新与锁回收
+companion/update-check.mjs     交互式 `start` / `inspect` 的每日 npm 更新检查
 skills/                       角色技能与 jobs 管理技能，以及按需加载的参考文件
 pi-skills/                    自动生成的 Pi 入口与参考文件，不应手动编辑
 templates/                    共享提示词模板与宿主兼容说明
