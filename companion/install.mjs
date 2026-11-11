@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PRODUCT, SKILL_PREFIX, UPSTREAM, globalHome } from './identity.mjs';
 import { sharedHome } from './pool/state.mjs';
@@ -331,7 +332,8 @@ function prune(currentName) {
 // every install. bash and zsh get one marked block in their rc file that sources
 // the script; fish autoloads ~/.config/fish/completions, so it gets a copy of
 // the script there. Only text between the markers (or a fish file carrying the
-// marker) is ever touched, and uninstall removes exactly that.
+// marker) is ever touched, and uninstall removes exactly that. PowerShell gets
+// the same marked block in its profile; see the PowerShell section below.
 
 const RC_BEGIN = `# >>> ${PRODUCT} completion >>>`;
 const RC_END = `# <<< ${PRODUCT} completion <<<`;
@@ -383,6 +385,103 @@ function installCompletion(shell) {
   if (next === rc) return 'unchanged';
   writeFileAtomic(target, next);
   return BLOCK_RE.test(rc) ? 'updated' : 'created';
+}
+
+// PowerShell: one marked block in the current-user profile that dot-sources
+// <globalHome>/completions/<product>.ps1. On Windows both PowerShell 7 (pwsh)
+// and Windows PowerShell 5.1 (powershell) are set up when present; each tells
+// us its own profile path, because Documents can be redirected. A profile is
+// never created or edited when the execution policy would refuse to load it:
+// that would print an error at every shell start.
+const PWSH_PROFILE = 'Microsoft.PowerShell_profile.ps1';
+const PWSH_BLOCKED_POLICIES = new Set(['restricted', 'allsigned']);
+const pwshScriptFile = () => path.join(completionsRoot(), `${PRODUCT}.ps1`);
+const pwshQuote = text => `'${String(text).replaceAll("'", "''")}'`;
+
+function probePowerShell(exe) {
+  const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-Command', '$PROFILE; Get-ExecutionPolicy'],
+    { encoding: 'utf8', timeout: 15000, windowsHide: true });
+  if (r.error || r.status !== 0) return null;
+  const lines = String(r.stdout).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return lines.length >= 2 ? { profile: lines[0], policy: lines[1] } : null;
+}
+
+/** True when HOME/USERPROFILE points away from the real profile directory
+ *  (a sandbox or test run). Windows PowerShell resolves its profile from the
+ *  real Documents folder, so editing it from there would escape the sandbox. */
+function homeOverridden() {
+  try { return path.resolve(os.homedir()).toLowerCase() !== path.resolve(os.userInfo().homedir).toLowerCase(); } catch { return false; }
+}
+
+/** PowerShell profiles to manage: [{ shell, file, skip? }]. */
+export function powershellTargets({ platform = process.platform, probe = probePowerShell, env = process.env, overridden = homeOverridden } = {}) {
+  if (platform !== 'win32') {
+    const dir = path.join(env.XDG_CONFIG_HOME || home('.config'), 'powershell');
+    const login = path.basename(env.SHELL || '') === 'pwsh';
+    return fs.existsSync(dir) || login ? [{ shell: 'pwsh', file: path.join(dir, PWSH_PROFILE) }] : [];
+  }
+  if (overridden()) return [];
+  const targets = [];
+  for (const exe of ['pwsh', 'powershell']) {
+    const found = probe(exe);
+    if (!found) continue;
+    const blocked = PWSH_BLOCKED_POLICIES.has(found.policy.toLowerCase());
+    targets.push({ shell: exe, file: found.profile, ...(blocked ? { skip: `execution policy ${found.policy}` } : {}) });
+  }
+  return targets;
+}
+
+function pwshBlock() {
+  const script = pwshScriptFile();
+  const rel = path.relative(os.homedir(), script);
+  // Relative to $HOME when possible: the block stays ASCII even when the user
+  // name is not, and Windows PowerShell reads a BOM-less profile as ANSI.
+  const expr = rel && !rel.startsWith('..') && !path.isAbsolute(rel)
+    ? `(Join-Path $HOME ${pwshQuote(rel)})`
+    : pwshQuote(script);
+  return `${RC_BEGIN}\nif (Test-Path -LiteralPath ${expr}) { . ${expr} }\n${RC_END}\n`;
+}
+
+/** Add, refresh or (block === null) remove the marked block in one profile.
+ *  Returns 'created' | 'updated' | 'unchanged' | 'removed' | 'conflict'. */
+function editPwshProfile(file, block) {
+  let raw = null;
+  try { raw = fs.readFileSync(file); } catch { /* no profile yet */ }
+  if (raw === null) {
+    if (block === null) return 'unchanged';
+    writeFileAtomic(file, (/[^\x00-\x7f]/.test(block) ? '\uFEFF' : '') + block);
+    return 'created';
+  }
+  // Only rewrite a profile that round-trips as UTF-8; a UTF-16 or ANSI one
+  // would be corrupted.
+  const text = raw.toString('utf8');
+  if ((raw[0] === 0xff && raw[1] === 0xfe) || (raw[0] === 0xfe && raw[1] === 0xff) || !Buffer.from(text, 'utf8').equals(raw)) return 'conflict';
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const body = text.replaceAll('\r\n', '\n');
+  const had = BLOCK_RE.test(body);
+  let next;
+  if (block === null) {
+    if (!had) return 'unchanged';
+    next = body.replace(BLOCK_RE, '\n').replace(/\n{3,}/g, '\n\n').replace(/^(\uFEFF?)\n+/, '$1');
+    if (!next.trim()) next = '';
+  } else if (had) {
+    next = body.replace(BLOCK_RE, (m) => (m.startsWith('\n') ? '\n' : '') + block);
+  } else {
+    next = `${body}${body && !body.endsWith('\n') ? '\n' : ''}${body.trim() ? '\n' : ''}${block}`;
+  }
+  if (next === body) return 'unchanged';
+  writeFileAtomic(file, next.replaceAll('\n', eol));
+  return block === null ? 'removed' : had ? 'updated' : 'created';
+}
+
+function installPwshCompletion(target) {
+  if (target.skip) return `skipped (${target.skip})`;
+  writeFileAtomic(pwshScriptFile(), completionScript('powershell'));
+  return editPwshProfile(target.file, pwshBlock());
+}
+
+function uninstallPwshCompletion(target) {
+  return editPwshProfile(target.file, null) === 'removed';
 }
 
 function uninstallCompletion(shell) {
@@ -484,6 +583,7 @@ export function cmdInstall(opts) {
   }
 
   const shells = opts['no-completion'] ? [] : completionShells();
+  const pwshTargets = opts['no-completion'] ? [] : powershellTargets();
 
   if (opts['dry-run']) {
     if (opts.json) return;
@@ -494,6 +594,7 @@ export function cmdInstall(opts) {
       if (h.extension) lines.push(`  ${path.basename(h.extension.dest)}  ${h.extension.change}`);
     }
     for (const sh of shells) lines.push(`completion ${sh}  ${SHELL_TARGETS[sh].rc()}`);
+    for (const t of pwshTargets) lines.push(`completion ${t.shell}  ${t.file}${t.skip ? `  skipped (${t.skip})` : ''}`);
     process.stdout.write(`${lines.join('\n')}\n`);
     return;
   }
@@ -537,6 +638,12 @@ export function cmdInstall(opts) {
       return { shell, file: SHELL_TARGETS[shell].rc(), change: 'failed' };
     }
   });
+  for (const target of pwshTargets) {
+    try { completion.push({ shell: target.shell, file: target.file, change: installPwshCompletion(target) }); } catch (error) {
+      process.stderr.write(`${PRODUCT} warning: could not set up ${target.shell} completion: ${error.message}\n`);
+      completion.push({ shell: target.shell, file: target.file, change: 'failed' });
+    }
+  }
 
   if (!opts.json) {
     const lines = [`${PRODUCT} ${bundle.version} → ${bundle.bundleDir}`];
@@ -546,6 +653,13 @@ export function cmdInstall(opts) {
     }
     for (const c of completion) lines.push(`${('completion ' + c.shell).padEnd(9)} ${c.change.padEnd(22)} ${c.file}`);
     if (completion.some(c => ['created', 'updated'].includes(c.change))) lines.push('Open a new shell to load tab completion.');
+    for (const c of completion) {
+      if (c.change.startsWith('skipped (execution policy')) {
+        lines.push(`${c.shell} does not load profile scripts under this execution policy. To enable completion: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then re-run ${PRODUCT} install.`);
+      } else if (c.change === 'conflict' && ['pwsh', 'powershell'].includes(c.shell)) {
+        lines.push(`${c.file} is not UTF-8, so it was left alone. To enable completion add this line to it: ${PRODUCT} completion powershell | Out-String | Invoke-Expression`);
+      }
+    }
     lines.push(`Restart the harnesses (or open a new session) to load the skills. Smoke test: /${SKILL_PREFIX}ask reply with OK`);
     process.stdout.write(`${lines.join('\n')}\n`);
   }
@@ -642,6 +756,12 @@ export function cmdUninstall(opts) {
         process.stderr.write(`${PRODUCT} warning: could not remove ${shell} completion: ${error.message}\n`);
       }
     }
+    for (const target of powershellTargets()) {
+      try { if (uninstallPwshCompletion(target)) completionRemoved.push(target.shell); } catch (error) {
+        process.stderr.write(`${PRODUCT} warning: could not remove ${target.shell} completion: ${error.message}\n`);
+      }
+    }
+    fs.rmSync(pwshScriptFile(), { force: true });
     try { fs.rmdirSync(completionsRoot()); } catch { /* not empty or absent */ }
   }
   if (opts.json) {

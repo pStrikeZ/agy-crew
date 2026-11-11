@@ -2213,7 +2213,7 @@ Setup
   install | uninstall [--hosts <a,b>] [--all] [--dry-run] [--status] [--no-completion]
                                             (install also links the skills into the shared home
                                             and sets up tab completion in your shell's rc file)
-  completion <bash|zsh|fish>                print a tab-completion script, e.g.
+  completion <bash|zsh|fish|powershell>     print a tab-completion script, e.g.
                                             source <(${PRODUCT} completion bash)
   version                                   print versions of ${PRODUCT} and agy
   help                                      this text

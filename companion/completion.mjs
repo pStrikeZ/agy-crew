@@ -1,6 +1,6 @@
-// Shell tab completion: `completion <bash|zsh|fish>` prints a script that asks
+// Shell tab completion: `completion <bash|zsh|fish|powershell>` prints a script that asks
 // `__complete <words...>` for candidates. Everything is decided here, in one
-// place, so the three shells never drift apart; the scripts only pass the
+// place, so the shells never drift apart; the scripts only pass the
 // words typed so far and print what comes back.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -55,7 +55,7 @@ export const MODELS = [
 ];
 const FAMILIES = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-pro',
   'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-oss-120b'];
-const SHELLS = ['bash', 'zsh', 'fish'];
+const SHELLS = ['bash', 'zsh', 'fish', 'powershell'];
 
 /** Values of a flag: a list, or null when only files make sense (the shell
  *  falls back to them when nothing comes back). */
@@ -156,8 +156,23 @@ function spawnTop() {
   return r.status === 0 && r.stdout.trim() ? path.normalize(r.stdout.trim()) : process.cwd();
 }
 
+/** PowerShell hands the words over as JSON in the environment: Windows
+ *  PowerShell drops empty-string arguments to native commands and mangles
+ *  embedded quotes, and the empty last word is what says "a new word starts". */
+function envWords() {
+  const raw = process.env.AGY_CREW_COMPLETE_WORDS;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String) : [String(parsed)];
+  } catch {
+    return [];
+  }
+}
+
 /** `__complete <words...>`: one candidate per line. */
-export function cmdComplete(words) {
+export function cmdComplete(argvWords) {
+  const words = envWords() ?? argvWords;
   const lines = complete(words.length ? words : [''], liveContext());
   if (lines.length) process.stdout.write(lines.join('\n') + '\n');
 }
@@ -204,10 +219,35 @@ function __${PRODUCT.replaceAll('-', '_')}_complete
 end
 complete -c ${PRODUCT} -f -a '(__${PRODUCT.replaceAll('-', '_')}_complete)'
 `,
+  powershell: `# PowerShell completion for ${PRODUCT}; add to $PROFILE:  ${PRODUCT} completion powershell | Out-String | Invoke-Expression
+Register-ArgumentCompleter -Native -CommandName '${PRODUCT}', '${PRODUCT}.cmd', '${PRODUCT}.ps1' -ScriptBlock {
+  param($wordToComplete, $commandAst, $cursorPosition)
+  # Words fully before the cursor, then the word being typed (empty after a space).
+  $words = @(
+    $commandAst.CommandElements | Select-Object -Skip 1 |
+      Where-Object { $_.Extent.EndOffset -lt $cursorPosition } |
+      ForEach-Object {
+        if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text }
+      }
+  ) + @([string]$wordToComplete)
+  $previous = $env:AGY_CREW_COMPLETE_WORDS
+  try {
+    $env:AGY_CREW_COMPLETE_WORDS = ConvertTo-Json -InputObject $words -Compress
+    $out = @(& ${PRODUCT} __complete 2>$null)
+  } catch {
+    $out = @()
+  } finally {
+    $env:AGY_CREW_COMPLETE_WORDS = $previous
+  }
+  $out | Where-Object { $_ } | ForEach-Object {
+    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+  }
+}
+`,
 };
 
 export const SHELL_NAMES = SHELLS;
-export const completionScript = (shell) => SCRIPTS[shell] ?? null;
+export const completionScript = (shell) => SCRIPTS[shell === 'pwsh' ? 'powershell' : shell] ?? null;
 
 export function cmdCompletion(opts) {
   const shell = opts._[0];

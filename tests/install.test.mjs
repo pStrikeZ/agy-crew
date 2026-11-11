@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sandbox, run, COMPANION, FAKE_AGY } from './helpers.mjs';
 import { generateSkills, ROOT } from '../scripts/generate-skills.mjs';
+import { powershellTargets } from '../companion/install.mjs';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const PERSONAS = ['accounts', 'ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
@@ -329,9 +330,12 @@ test('completion: --no-completion skips it, the login shell gets an rc created, 
   assert.equal(fs.readFileSync(path.join(own, 'agy-crew.fish'), 'utf8'), 'my own\n');
 });
 
+// The rc path goes into a shell command line: quote it and use forward slashes,
+// or Git Bash on Windows reads the backslashes of C:\Users\... as escapes.
+const shPath = (file) => `"${file.replaceAll('\\', '/')}"`;
 for (const [shell, probe] of [
-  ['zsh', (rc) => ['-f', '-c', `source ${rc}; print -r -- $_comps[agy-crew]`]],
-  ['bash', (rc) => ['--norc', '-c', `source ${rc}; complete -p agy-crew`]],
+  ['zsh', (rc) => ['-f', '-c', `source ${shPath(rc)}; print -r -- $_comps[agy-crew]`]],
+  ['bash', (rc) => ['--norc', '-c', `source ${shPath(rc)}; complete -p agy-crew`]],
 ]) {
   test(`the rc block really loads in ${shell}`, { skip: spawnSync(shell, ['--version']).error ? `${shell} not installed` : false }, () => {
     const sb = sandbox(`inst-completion-${shell}`);
@@ -359,6 +363,86 @@ test('the installed fish completion answers', { skip: spawnSync('fish', ['--vers
   assert.deepEqual(ask('agy-crew inspe'), ['inspect']);
   assert.deepEqual(ask('agy-crew ask --effort '), ['high', 'low', 'medium']);
   assert.deepEqual(ask('agy-crew install --hosts claude,s'), ['claude,shared']);
+});
+
+// PowerShell. Off Windows the profile lives under ~/.config/powershell, so the
+// installer path is testable without pwsh; on Windows it is resolved by asking
+// PowerShell itself and is skipped for a sandboxed HOME (see powershellTargets).
+const POSIX = process.platform !== 'win32';
+const pwshProfile = (sb) => path.join(sb.home, '.config', 'powershell', 'Microsoft.PowerShell_profile.ps1');
+
+test('install manages one block in the PowerShell profile and keeps its line endings', { skip: POSIX ? false : 'POSIX profile path' }, () => {
+  const sb = sandbox('inst-completion-pwsh');
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  fs.mkdirSync(path.dirname(pwshProfile(sb)), { recursive: true });
+  fs.writeFileSync(pwshProfile(sb), 'Set-Alias ll ls\r\n');
+  const e = rcEnv(sb, { XDG_CONFIG_HOME: '' });
+
+  const r = install(sb, [], e);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /completion pwsh +created/);
+  const profile = fs.readFileSync(pwshProfile(sb), 'utf8');
+  assert.ok(profile.startsWith('Set-Alias ll ls\r\n'));
+  assert.equal(profile.split(BEGIN).length, 2);
+  assert.match(profile, /if \(Test-Path -LiteralPath .*agy-crew\.ps1'?\)?\) \{ \. .*agy-crew\.ps1'?\)? \}\r\n/);
+  assert.doesNotMatch(profile, /[^\r]\n/, 'CRLF is kept throughout');
+  assert.match(fs.readFileSync(path.join(sb.root, 'crew-home', 'completions', 'agy-crew.ps1'), 'utf8'), /Register-ArgumentCompleter -Native/);
+
+  assert.match(install(sb, [], e).stdout, /completion pwsh +unchanged/);
+  assert.equal(fs.readFileSync(pwshProfile(sb), 'utf8'), profile);
+
+  const u = run(sb, ['uninstall', '--all'], e);
+  assert.match(u.stdout, /completion +removed from .*pwsh/);
+  assert.doesNotMatch(fs.readFileSync(pwshProfile(sb), 'utf8'), new RegExp(BEGIN));
+  assert.ok(fs.readFileSync(pwshProfile(sb), 'utf8').startsWith('Set-Alias ll ls\r\n'));
+  assert.equal(fs.existsSync(path.join(sb.root, 'crew-home', 'completions')), false);
+});
+
+test('a PowerShell profile that is not UTF-8 is left alone', { skip: POSIX ? false : 'POSIX profile path' }, () => {
+  const sb = sandbox('inst-completion-pwsh-utf16');
+  fs.mkdirSync(path.join(sb.home, '.claude'));
+  fs.mkdirSync(path.dirname(pwshProfile(sb)), { recursive: true });
+  const original = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Set-Alias ll ls\r\n', 'utf16le')]);
+  fs.writeFileSync(pwshProfile(sb), original);
+  const r = install(sb, [], rcEnv(sb, { XDG_CONFIG_HOME: '' }));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /completion pwsh +conflict/);
+  assert.match(r.stdout, /agy-crew completion powershell \| Out-String \| Invoke-Expression/);
+  assert.ok(fs.readFileSync(pwshProfile(sb)).equals(original));
+});
+
+test('on Windows the profile comes from PowerShell itself and a blocking execution policy is skipped', () => {
+  const probe = (exe) => ({
+    pwsh: { profile: 'D:\\Docs\\PowerShell\\Microsoft.PowerShell_profile.ps1', policy: 'RemoteSigned' },
+    powershell: { profile: 'D:\\Docs\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1', policy: 'Restricted' },
+  }[exe]);
+  assert.deepEqual(powershellTargets({ platform: 'win32', probe, overridden: () => false }), [
+    { shell: 'pwsh', file: 'D:\\Docs\\PowerShell\\Microsoft.PowerShell_profile.ps1' },
+    { shell: 'powershell', file: 'D:\\Docs\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1', skip: 'execution policy Restricted' },
+  ]);
+  assert.deepEqual(powershellTargets({ platform: 'win32', probe: (exe) => (exe === 'pwsh' ? null : probe(exe)), overridden: () => false }).map(t => t.shell), ['powershell']);
+  assert.deepEqual(powershellTargets({ platform: 'win32', probe, overridden: () => true }), [], 'a sandboxed HOME never reaches the real profile');
+});
+
+test('the PowerShell completer answers', { skip: spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0 ? false : 'pwsh not installed' }, () => {
+  const sb = sandbox('inst-completion-pwsh-live');
+  const script = path.join(sb.root, 'agy-crew-completion.ps1');
+  fs.writeFileSync(script, run(sb, ['completion', 'powershell']).stdout);
+  const bin = path.join(sb.root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'agy-crew'), `#!/bin/sh\nexec "${process.execPath}" "${COMPANION}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'agy-crew.cmd'), `@"${process.execPath}" "${COMPANION}" %*\r\n`);
+  const ask = (line) => {
+    const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command',
+      `. '${script}'; $l = '${line}'; ([System.Management.Automation.CommandCompletion]::CompleteInput($l, $l.Length, $null)).CompletionMatches | ForEach-Object CompletionText`],
+    { encoding: 'utf8', env: { ...process.env, HOME: sb.home, USERPROFILE: sb.home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...env(sb) } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.split(/\r?\n/).filter(Boolean);
+  };
+  assert.deepEqual(ask('agy-crew inspe'), ['inspect']);
+  assert.deepEqual(ask('agy-crew accounts cooldown '), ['clear', 'record'], 'an empty last word completes the next position');
+  assert.deepEqual(ask('agy-crew ask --effort '), ['low', 'medium', 'high']);
+  assert.deepEqual(ask('agy-crew ask --mo'), ['--model']);
 });
 
 test('--hosts omp installs the companion extension, status sees it, uninstall removes it', () => {

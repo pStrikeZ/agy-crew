@@ -566,7 +566,7 @@ agy-crew install
 | `agy-crew install --status` | 显示各 host 的链接状态和 bundle |
 | `agy-crew install --json` | 输出机器可读结果（可与以上任一参数组合） |
 | `agy-crew uninstall [--hosts …\|--all]` | 只移除安装器自己创建的链接 |
-| `agy-crew completion <bash\|zsh\|fish>` | 打印 tab 补全脚本（`source <(agy-crew completion bash)`，zsh/fish 同理）。补全命令、参数、参数值（模型、effort、host）、账号名和任务 id；shell 通过隐藏命令 `agy-crew __complete <words…>` 取候选 |
+| `agy-crew completion <bash\|zsh\|fish\|powershell>` | 打印 tab 补全脚本（`source <(agy-crew completion bash)`，zsh/fish 同理；PowerShell 用 `agy-crew completion powershell \| Out-String \| Invoke-Expression`）。补全命令、参数、参数值（模型、effort、host）、账号名和任务 id；shell 通过隐藏命令 `agy-crew __complete <words…>` 取候选 |
 
 在 `omp` host 上，`install` 还会写入 `~/.omp/agent/extensions/agy-crew-omp.ts`：一个受管的 loader，重新导出包内的 `omp/extension.mjs`。`agy-crew omp` 需要这个扩展；`uninstall` 会随链接一起移除它。该路径若已有非本安装器创建的文件，会作为冲突中止安装，不写入任何内容。
 
@@ -586,6 +586,8 @@ agy-crew install
 ### Shell 补全
 
 `install` 还会设置 tab 补全（`--no-completion` 可跳过）。脚本写在 `~/.agy-crew/completions/`，每次安装都会刷新。bash（`~/.bashrc`）和 zsh（`$ZDOTDIR/.zshrc` 或 `~/.zshrc`）会追加一段位于 `# >>> agy-crew completion >>>` 与 `# <<< agy-crew completion <<<` 之间的块，用来 source 该脚本；rc 文件其余内容绝不改动，重复安装只替换这一段。fish 则写 `~/.config/fish/completions/agy-crew.fish`（带托管标记；你自己写的同名文件不会被覆盖，只报告冲突）。某个 shell 在其 rc 文件（fish 为配置目录）存在或它是登录 shell（`$SHELL`）时才会设置。rc 里还没有 `compinit` 时，zsh 的脚本会自己调用。`uninstall` 在移除最后一个技能链接时一并移除这些块和文件。完成后新开一个 shell 即可。
+
+PowerShell 同样是在当前用户的 profile（`$PROFILE`）里写入一段带标记的块，用来加载 `~/.agy-crew/completions/agy-crew.ps1`；脚本注册的是原生参数补全器。Windows 上 PowerShell 7（`pwsh`）和 Windows PowerShell 5.1（`powershell`）只要存在就都会设置，profile 路径由各自的 PowerShell 给出，所以"文档"文件夹被重定向也没问题。其他系统上，`~/.config/powershell` 存在或登录 shell 是 `pwsh` 时才设置。有两种情况只报告、不改动：执行策略是 `Restricted` 或 `AllSigned`（此时 profile 每次启动都会加载失败；先运行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 再重新安装），以及现有 profile 不是 UTF-8（请自己把上面那行 `Invoke-Expression` 加进去）。`cmd.exe` 没有可编程补全，因此不支持。
 
 ### 工作方式
 

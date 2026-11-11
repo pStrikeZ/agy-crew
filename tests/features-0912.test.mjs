@@ -109,7 +109,7 @@ test('completion: commands, subcommands, flags and flag values', () => {
   assert.deepEqual(complete(sb, 'accounts', 'cooldown', ''), ['clear', 'record']);
   assert.deepEqual(complete(sb, 'accounts', 'cooldown', 'record', 'work', '--f'), ['--family']);
   assert.deepEqual(complete(sb, 'install', '--hosts', 'claude,s'), ['claude,shared']);
-  assert.deepEqual(complete(sb, 'completion', ''), ['bash', 'zsh', 'fish']);
+  assert.deepEqual(complete(sb, 'completion', ''), ['bash', 'zsh', 'fish', 'powershell']);
   assert.deepEqual(complete(sb, 'start', 'w'), ['work']);
   assert.deepEqual(complete(sb, 'start', '--'), ['--model', '--help', '--']);
   assert.deepEqual(complete(sb, 'start', 'work', '--', '--m'), [], 'after -- the words are agy\'s');
@@ -124,14 +124,19 @@ test('completion: job ids come from this repository, scripts print for every she
   assert.deepEqual(complete(sb, 'inspect', ''), ['review-bbb-2', 'research-aaa-1'], 'newest first');
   assert.deepEqual(complete(sb, 'result', 'research'), ['research-aaa-1']);
   assert.deepEqual(complete(sb, 'continue', '--job', 'rev'), ['review-bbb-2']);
-  for (const shell of ['bash', 'zsh', 'fish']) {
+  for (const shell of ['bash', 'zsh', 'fish', 'powershell', 'pwsh']) {
     const r = run(sb, ['completion', shell]);
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /agy-crew __complete/);
   }
-  const bad = run(sb, ['completion', 'powershell']);
+  const bad = run(sb, ['completion', 'tcsh']);
   assert.equal(bad.code, 1);
-  assert.match(bad.stderr, /usage: agy-crew completion <bash\|zsh\|fish>/);
+  assert.match(bad.stderr, /usage: agy-crew completion <bash\|zsh\|fish\|powershell>/);
+
+  // PowerShell passes the words as JSON in the environment (an empty last word survives).
+  const viaEnv = (words) => run(sb, ['__complete'], { AGY_CREW_COMPLETE_WORDS: JSON.stringify(words) }).stdout.split('\n').filter(Boolean);
+  assert.deepEqual(viaEnv(['accounts', 'cooldown', '']), ['clear', 'record']);
+  assert.deepEqual(viaEnv(['accounts', 'coo']), ['cooldown']);
 });
 
 // ---------------------------------------------------------------------------

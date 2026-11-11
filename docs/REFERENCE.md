@@ -474,7 +474,7 @@ From a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew 
 | `agy-crew install --status` | Show per-host link state and bundles |
 | `agy-crew install --json` | Machine-readable output (combine with any of the above) |
 | `agy-crew uninstall [--hosts …\|--all]` | Remove only the links the installer created |
-| `agy-crew completion <bash\|zsh\|fish>` | Print a tab-completion script (`source <(agy-crew completion bash)`, or the zsh/fish equivalent). It completes commands, flags, flag values (models, efforts, hosts), account names and job ids; the shell calls the hidden `agy-crew __complete <words…>` |
+| `agy-crew completion <bash\|zsh\|fish\|powershell>` | Print a tab-completion script (`source <(agy-crew completion bash)`, or the zsh/fish equivalent; PowerShell: `agy-crew completion powershell \| Out-String \| Invoke-Expression`). It completes commands, flags, flag values (models, efforts, hosts), account names and job ids; the shell calls the hidden `agy-crew __complete <words…>` |
 
 On the `omp` host, `install` also writes `~/.omp/agent/extensions/agy-crew-omp.ts`, a managed loader that re-exports the bundled `omp/extension.mjs`. `agy-crew omp` needs that extension; `uninstall` removes the loader along with the links. A non-managed file at that path is a conflict and aborts the install before anything is written.
 
@@ -496,6 +496,8 @@ Pi is not covered by `install`; use the Pi package route (`pi install git:github
 ### Shell completion
 
 `install` also sets up tab completion (skip it with `--no-completion`). The scripts are written to `~/.agy-crew/completions/` and refreshed on every install. For bash (`~/.bashrc`) and zsh (`$ZDOTDIR/.zshrc` or `~/.zshrc`) it appends one block between `# >>> agy-crew completion >>>` and `# <<< agy-crew completion <<<` that sources the script; the rest of the rc file is never touched, and a repeat install replaces the block instead of adding another. For fish it writes `~/.config/fish/completions/agy-crew.fish` (marked as managed; a file you wrote yourself there is left alone and reported as a conflict). A shell is set up when its rc file (fish: its config directory) exists or it is your login shell (`$SHELL`). zsh runs `compinit` itself if the rc file has not yet. `uninstall` removes the blocks and files together with the last skill link. Open a new shell afterwards.
+
+PowerShell gets the same marked block in its current-user profile (`$PROFILE`), which dot-sources `~/.agy-crew/completions/agy-crew.ps1`; the script registers a native argument completer. On Windows both PowerShell 7 (`pwsh`) and Windows PowerShell 5.1 (`powershell`) are set up when present, and each is asked for its own profile path, so a redirected Documents folder works. Elsewhere `pwsh` is set up when `~/.config/powershell` exists or it is your login shell. Two cases are reported instead of changed: an execution policy of `Restricted` or `AllSigned` (the profile would fail to load at every start; run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` and install again), and an existing profile that is not UTF-8 (add the `Invoke-Expression` line above to it yourself). `cmd.exe` has no programmable completion, so it is not supported.
 
 ### Mechanics
 
