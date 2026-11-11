@@ -17,6 +17,7 @@ import { modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { warmUp } from './pool/quota.mjs';
 import { readOmpCredential } from '../omp/credential.mjs';
+import { ompExtensionProblem } from './install.mjs';
 
 const DEFAULT_FAMILY = 'gemini-3.8-flash';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
@@ -195,7 +196,7 @@ the bundled omp extension seeds its credential and rewrites omp's block-0 role.
   --family <family>            quota family for selection (default ${DEFAULT_FAMILY})
   -- <omp args>...             passed to omp unchanged
 
-The omp extension must be installed:
+The omp extension must be installed first; without it this command refuses to start:
   agy-crew install --hosts omp
 or, from the npm package:
   omp plugin install agy-crew
@@ -208,6 +209,17 @@ export async function cmdOmp(rest, deps) {
   if (help) {
     process.stdout.write(ompHelp());
     return 0;
+  }
+  // Without the extension omp starts normally but never sees the pool account:
+  // google-antigravity stays paused and the session silently runs on whatever
+  // else is configured. Refuse before taking a hold.
+  if (process.env.AGY_CREW_OMP_SKIP_INSTALL_CHECK !== '1') {
+    const problem = ompExtensionProblem();
+    if (problem) {
+      throw new PoolError(
+        `${problem}. Run \`${PRODUCT} install --hosts omp\` (or \`omp plugin install ${PRODUCT}\`), then start \`${PRODUCT} omp\` again.`,
+      );
+    }
   }
   const picked = acquire(account, family);
   try {

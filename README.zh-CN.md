@@ -230,6 +230,10 @@ agy-crew omp       -- --model google-antigravity/gemini-3.8-flash
 
 `--` 之后是 omp 自己的参数，原样传递。omp 默认把 `google-antigravity` 标记为 paused（“Google may restrict accounts that use Antigravity outside its own apps”）；插件只在 `agy-crew omp` 环境下注册一个同名 OAuth provider 取回该 id，并把选中账号作为 **runtime bearer** 注入（不写 `agent.db`、不建 profile、不 restrict session），由后台 agy warm-up 在过期前刷新。`before_agent_start` 删除 omp block 0 的 `§ Role / You are omp's trusted coding assistant.` 和 `cfg://`/`omp://` 入口，换成 Antigravity 的 `identity.tmpl`，其余工具描述、skills、rules、footer 保留；`before_provider_request` 还会清掉工具声明里的 `omp://` 示例。
 
+没有安装插件时（既没有 `agy-crew install --hosts omp` 写入的 loader，也没有 `omp plugin install agy-crew` 装的包，或者 loader 指向的包已被删除），`agy-crew omp` 会拒绝启动：否则 omp 能正常打开，却根本用不到池账号。如果你用别的方式加载插件（例如 omp 的 `--profile`），可以设置 `AGY_CREW_OMP_SKIP_INSTALL_CHECK=1` 跳过检查。
+
+连到 Cloud Code 端点的连接中断（`EPROTO: The TLS handshake failed`、`ECONNRESET`、`EPIPE`）不在 omp 认定的瞬时错误措辞里，第一次失败就会结束当前回合。插件只针对 Cloud Code 域名改写这类错误的措辞，让 omp 自己的重试额度（`retry.maxRetries`，默认 10 次）对它们生效，和 `503 No capacity available` 的处理一致。设置 `AGY_CREW_OMP_TRANSPORT_SHIM=0` 可以关闭。
+
 限制：一个 omp 进程只使用一个池账号；同一进程内多账号、按 session 均衡仍需要完整插件模式。没有设置 `AGY_CREW_OMP_ACCOUNT` 时插件完全惰性，普通 `omp` 行为不变。
 
 ## 核心设计

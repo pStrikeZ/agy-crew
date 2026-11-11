@@ -64,6 +64,28 @@ function hasManagedExtension() {
   const dest = extensionPath('omp');
   try { return fs.readFileSync(dest, 'utf8').startsWith(EXTENSION_MARKER); } catch { return false; }
 }
+
+/**
+ * Why `${PRODUCT} omp` cannot work yet, or null when omp will load the bundled
+ * extension: through the loader `install` writes, or through the package that
+ * `omp plugin install ${PRODUCT}` puts under omp's plugin directory.
+ */
+export function ompExtensionProblem() {
+  const dest = extensionPath('omp');
+  let loader = null;
+  try { loader = fs.readFileSync(dest, 'utf8'); } catch { /* not installed through the loader */ }
+  if (loader !== null) {
+    // A file the user wrote themselves is theirs to get right.
+    if (!loader.startsWith(EXTENSION_MARKER)) return null;
+    const url = /from\s+("(?:[^"\\]|\\.)*")/.exec(loader)?.[1];
+    let target = null;
+    try { target = fileURLToPath(JSON.parse(url)); } catch { /* unreadable loader */ }
+    if (target && fs.existsSync(target)) return null;
+    return `the omp extension loader ${dest} points at a missing file${target ? ` (${target})` : ''}`;
+  }
+  if (fs.existsSync(home('.omp', 'agent', 'plugins', 'node_modules', PRODUCT, 'omp', 'extension.mjs'))) return null;
+  return 'the omp extension is not installed';
+}
 const hostPresent = key => HOSTS[key].always || fs.existsSync(path.join(hostBase(key), ...HOSTS[key].detect));
 const fwd = p => p.replaceAll('\\', '/');
 const bundlesRoot = () => path.join(globalHome(), 'bundles');

@@ -274,6 +274,10 @@ agy-crew omp       -- --model google-antigravity/gemini-3.8-flash
 
 `--` ends agy-crew's flags; everything after it goes to omp unchanged. The command selects an account, holds it until omp exits, and exports the account name for the plugin. omp ships `google-antigravity` paused ("Google may restrict accounts that use Antigravity outside its own apps"); under `agy-crew omp` only, the plugin registers a same-id OAuth provider to take the id back and installs the selected account as the session's **runtime bearer** (no `agent.db` write, no profile, no session restriction). A background agy warm-up refreshes the bearer before expiry. The prompt rewrite removes block 0's `§ Role / You are omp's trusted coding assistant.` and the `cfg://`/`omp://` entries, adds `identity.tmpl`, and `before_provider_request` strips `omp://` examples from tool declarations; tool schemas, skills, rules, and the footer stay as they are.
 
+`agy-crew omp` refuses to start when the extension is not installed (neither the loader from `agy-crew install --hosts omp` nor the `omp plugin install agy-crew` package is present, or the loader points at a removed package): without it omp would start normally but never see the pool account. Set `AGY_CREW_OMP_SKIP_INSTALL_CHECK=1` if you load the extension some other way (for example an omp `--profile`).
+
+A dropped connection to the Cloud Code endpoint (`EPROTO: The TLS handshake failed`, `ECONNRESET`, `EPIPE`) is not wording omp treats as transient, so it would end the turn on the first failure. The extension rewords these errors, for the Cloud Code hosts only, so omp's own retry budget (`retry.maxRetries`, 10 by default) applies to them as it already does to `503 No capacity available`. `AGY_CREW_OMP_TRANSPORT_SHIM=0` turns this off.
+
 Limitation: one pool account per omp process. In-process multi-account, per-session balancing still needs the full plugin mode. The extension is inert when `AGY_CREW_OMP_ACCOUNT` is unset, so a plain `omp` is unchanged.
 
 ## Core design

@@ -8,12 +8,15 @@
  *   2. installs the selected account as the session's runtime bearer, refreshed
  *      in the background by agy warm-up;
  *   3. replaces omp's block-0 role sentence with the upstream Antigravity
- *      identity and strips the omp/cfg/omp URL fingerprints.
+ *      identity and strips the omp/cfg/omp URL fingerprints;
+ *   4. rewords dropped-connection errors on the Cloud Code hosts so omp's own
+ *      retry budget applies to them (see transport.mjs).
  */
 import { readOmpCredential, readOmpCredentialCached, toStructuredApiKey } from './credential.mjs';
 import { warmUp } from '../companion/pool/quota.mjs';
 import { accountHome } from './paths.mjs';
 import { IDENTITY_SENTINEL, identityText, sanitizeTools, transformBlock0 } from './prompt.mjs';
+import { installTransportShim } from './transport.mjs';
 
 const PROVIDER = 'google-antigravity';
 const ACCOUNT = process.env.AGY_CREW_OMP_ACCOUNT || '';
@@ -99,6 +102,8 @@ export default function agyCrewOmp(pi) {
   // factory; only one may install handlers in a process.
   if (globalThis[INSTALL_GUARD]) return;
   globalThis[INSTALL_GUARD] = true;
+
+  if (process.env.AGY_CREW_OMP_TRANSPORT_SHIM !== '0') installTransportShim();
 
   // omp ships google-antigravity paused (`providerDisabledReason`). Registering
   // an OAuth provider under the same id is the documented escape hatch: it takes
