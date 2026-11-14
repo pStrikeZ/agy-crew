@@ -72,7 +72,7 @@ test('accounts list aligns its columns and puts quota and cooldowns in their own
   const later = (ms) => new Date(Date.now() + ms).toISOString();
   seedPool(sb, [{ name: 'a', email: 'a@x.io', last_used_at: later(-9 * MIN - 30_000) }, { name: 'longer-name', email: 'longer@example.org' }], (p) => {
     p.leases.push({ id: 'l', account: 'longer-name', pid: process.pid, job_id: null, role: 'run', started_at: '' });
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: later(HOUR + 5 * MIN + 30_000) };
+    p.cooldowns[`a|gemini`] = { retry_at: later(HOUR + 5 * MIN + 30_000) };
     p.quota.a = { refreshed_at: later(-2 * MIN - 30_000), plan_type: 'pro', error: null, pools: {
       gemini: { short: { remaining: 0.25, reset_at: later(3 * HOUR + 30_000) }, weekly: { remaining: 1, reset_at: later(3 * 24 * HOUR + 30_000) } } } };
   });
@@ -94,5 +94,5 @@ test('accounts list aligns its columns and puts quota and cooldowns in their own
   assert.ok(lines.some((l) => /^longer-name {2}not refreshed/.test(l)));
   const i = lines.indexOf('COOLDOWNS');
   assert.ok(i > 0);
-  assert.match(lines[i + 1], new RegExp(`^a {2}${FAMILY} {2}until .*\\(in 1h05m\\)$`));
+  assert.match(lines[i + 1], /^a {2}gemini {2}until .*\(in 1h05m\)$/);
 });

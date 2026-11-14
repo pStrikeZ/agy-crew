@@ -123,7 +123,7 @@ test('a conversation cannot borrow while another run holds its account', () => {
   assert.equal(run(sb, ['ask', '--account', 'a', '--prompt', 'start'], withEnvFile(sb)).code, 0);
   const pool = readPool(sb);
   pool.accounts.find((a) => a.name === 'a').parallel = 2;
-  pool.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3_600_000).toISOString(), reason: 'quota_exhausted' };
+  pool.cooldowns[`a|gemini`] = { retry_at: new Date(Date.now() + 3_600_000).toISOString(), reason: 'quota_exhausted' };
   pool.leases.push({ id: 'busy', account: 'a', pid: process.pid, job_id: null, role: 'run', started_at: '' });
   writePool(sb, pool);
 
@@ -169,7 +169,7 @@ test('quota with no conversation records a cooldown with the parsed reset and fa
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /fake answer/);
   assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x']);
-  const cooldown = readPool(sb).cooldowns[`a|${FAMILY}`];
+  const cooldown = readPool(sb).cooldowns[`a|gemini`];
   assert.equal(cooldown.reason, 'quota_exhausted');
   const wait = Date.parse(cooldown.retry_at) - Date.parse(cooldown.recorded_at);
   assert.equal(wait, 2 * 3_600_000 + 3 * 60_000);
@@ -183,7 +183,7 @@ test('quota with no conversation records a cooldown with the parsed reset and fa
 
 test('next run skips an account that is cooling for the family', () => {
   const sb = sandbox('pool-skip-cooling');
-  twoAccounts(sb, (p) => { p.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3600_000).toISOString(), reason: 'quota_exhausted' }; });
+  twoAccounts(sb, (p) => { p.cooldowns[`a|gemini`] = { retry_at: new Date(Date.now() + 3600_000).toISOString(), reason: 'quota_exhausted' }; });
   assert.equal(run(sb, ['ask', '--prompt', 'hi'], withEnvFile(sb)).code, 0);
   assert.equal(envCalls(envFile(sb))[0].account_email, 'b@x');
 });
@@ -210,15 +210,15 @@ test('quota on a bound conversation borrows an idle account credential and resto
   assert.equal(fs.existsSync(path.join(path.dirname(tokenFileOf(sb, 'a')), '.antigravity-oauth-token.agy-crew.loan-backup')), false);
   const pool = readPool(sb);
   assert.deepEqual([pool.loans, pool.leases], [[], []]);
-  assert.ok(pool.cooldowns[`a|${FAMILY}`], 'the quota cooldown is on the borrower that hit the limit');
-  assert.equal(pool.cooldowns[`b|${FAMILY}`], undefined);
+  assert.ok(pool.cooldowns[`a|gemini`], 'the quota cooldown is on the borrower that hit the limit');
+  assert.equal(pool.cooldowns[`b|gemini`], undefined);
 });
 
 test('continuing a bound conversation whose account is cooling starts with a loan', () => {
   const sb = sandbox('pool-loan-start');
   twoAccounts(sb, (p) => {
     p.conversations['conv-1'] = { account: 'a', recorded_at: '' };
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3600_000).toISOString(), reason: 'quota_exhausted' };
+    p.cooldowns[`a|gemini`] = { retry_at: new Date(Date.now() + 3600_000).toISOString(), reason: 'quota_exhausted' };
   });
   // a state file that knows the conversation (as a previous run would have left)
   assert.equal(run(sb, ['ask', '--account', 'live', '--prompt', 'seed']).code, 0);
@@ -257,8 +257,8 @@ test('every account cooling is a quota_exhausted error naming the earliest retry
   const soon = new Date(Date.now() + 1800_000).toISOString();
   const later = new Date(Date.now() + 7200_000).toISOString();
   twoAccounts(sb, (p) => {
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: later, reason: 'quota_exhausted' };
-    p.cooldowns[`b|${FAMILY}`] = { retry_at: soon, reason: 'quota_exhausted' };
+    p.cooldowns[`a|gemini`] = { retry_at: later, reason: 'quota_exhausted' };
+    p.cooldowns[`b|gemini`] = { retry_at: soon, reason: 'quota_exhausted' };
   });
   const r = run(sb, ['ask', '--prompt', 'hi'], withEnvFile(sb));
   assert.equal(r.code, 1);
@@ -322,7 +322,7 @@ test('a 503 with no conversation parks the account briefly and fails over with t
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /fake answer/);
   assert.deepEqual(envCalls(envFile(sb)).map((c) => c.account_email), ['a@x', 'b@x']);
-  const cooldown = readPool(sb).cooldowns[`a|${FAMILY}`];
+  const cooldown = readPool(sb).cooldowns[`a|gemini`];
   assert.equal(cooldown.reason, 'upstream_unavailable');
   assert.equal(Date.parse(cooldown.retry_at) - Date.parse(cooldown.recorded_at), 3 * 60_000);
   assert.match(cooldown.message, /No capacity available/);
@@ -389,8 +389,8 @@ test('503 on every account is upstream_unavailable, not a quota error', () => {
   assert.doesNotMatch(r.stderr, /out of .* quota/);
   assert.equal(envCalls(envFile(sb)).length, 2, 'each account is tried once');
   const pool = readPool(sb);
-  assert.equal(pool.cooldowns[`a|${FAMILY}`].reason, 'upstream_unavailable');
-  assert.equal(pool.cooldowns[`b|${FAMILY}`].reason, 'upstream_unavailable');
+  assert.equal(pool.cooldowns[`a|gemini`].reason, 'upstream_unavailable');
+  assert.equal(pool.cooldowns[`b|gemini`].reason, 'upstream_unavailable');
 });
 
 test('a background job that gets a 503 everywhere stops in attention and says to rewrite, not continue', async () => {

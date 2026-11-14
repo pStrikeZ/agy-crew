@@ -18,7 +18,7 @@ test('rename moves the directory, cooldowns, quota and conversation bindings', (
   const sb = sandbox('rename');
   const later = new Date(Date.now() + 3600_000).toISOString();
   seedPool(sb, [{ name: 'old', email: 'a@example.com' }, { name: 'other', email: 'b@example.com' }], (pool) => {
-    pool.cooldowns['old|gemini-3.8-flash'] = { retry_at: later, reason: 'quota_exhausted' };
+    pool.cooldowns['old|gemini'] = { retry_at: later, reason: 'quota_exhausted' };
     pool.quota.old = { error: null };
     pool.conversations.c1 = { account: 'old' };
     pool.conversations.c2 = { account: 'other' };
@@ -30,7 +30,7 @@ test('rename moves the directory, cooldowns, quota and conversation bindings', (
   assert.equal(fs.existsSync(path.join(globalHomeOf(sb), 'accounts', 'old')), false);
   const pool = readPool(sb);
   assert.deepEqual(pool.accounts.map((a) => a.name), ['new', 'other']);
-  assert.deepEqual(Object.keys(pool.cooldowns), ['new|gemini-3.8-flash']);
+  assert.deepEqual(Object.keys(pool.cooldowns), ['new|gemini']);
   assert.ok(pool.quota.new && !pool.quota.old);
   assert.equal(pool.conversations.c1.account, 'new');
   assert.equal(pool.conversations.c2.account, 'other');

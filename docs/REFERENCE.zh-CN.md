@@ -247,7 +247,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 ## 账号池
 
-账号池让并发任务跑在不同的 agy 账号上，并按账号、按模型家族记录配额。它属于用户全局，不属于某个仓库。
+账号池让并发任务跑在不同的 agy 账号上，并按账号、按配额池记录配额。它属于用户全局，不属于某个仓库。
 
 **两类账号。**
 
@@ -266,7 +266,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
 | `accounts parallel <name> [<n>]` | 一个账号同时可以被多少个由 agent（skill）发起的任务持有。不带 `<n>` 时显示当前上限；带上时设为 1–64，未设置视为 1。修改不要求账号空闲，也不会改动令牌。交互式 `start`/`omp` 仍独占账号；凭据处于借用中时该上限不生效 |
-| `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
+| `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个配额池（用其中任一家族名指定），不指定则全部清除 |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
 | `start [<name>] [--model <id>] [-- <agy args>...]` | 在当前终端、当前目录下、在共享 home 中交互式运行 agy，使用 `<name>` 的凭据；不带账号名时使用某个有额度的空闲账号的凭据。见[交互式会话](#交互式会话) |
@@ -293,7 +293,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | 请求值 | 行为 |
 | --- | --- |
 | `live` | 使用你自己的登录 |
-| `<name>` | 使用该账号。账号不存在、已停用或需要登录时报错。若它在该模型家族上处于冷却，则报错并给出 `retry_at`，建议改用 `--account auto` 或其他模型家族 |
+| `<name>` | 使用该账号。账号不存在、已停用或需要登录时报错。若它在该模型所属配额池上处于冷却，则报错并给出 `retry_at`，建议改用 `--account auto` 或另一个池的模型 |
 | `auto` | 没有启用的池账号时用 live，否则按下面的规则挑选 |
 
 **`auto` 的选择规则。** 候选账号必须不属于任何凭据借用、已启用、有令牌文件、没有认证错误、在该模型家族上没有生效的冷却、缓存的 Cloud Code 快照没有显示该家族所属配额池剩余为 0 且重置时间尚未到来，并且当前租约数少于它的并行上限（`accounts parallel`，默认 1）。候选账号依次按以下条件排序：
@@ -313,7 +313,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 **模型家族**是去掉末尾推理强度后缀（`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）的模型 ID：`gemini-3.8-flash-low` 属于 `gemini-3.8-flash`。Cloud Code 把配额分成两个**配额池**：`gemini`（以 `gemini` 开头的家族）和 `other`。
 
-任务因 agy 的配额错误失败时（`RESOURCE_EXHAUSTED`，并带有 `Individual quota reached` 或 `Weekly quota reached`），companion 会记录一条**以账号和模型家族为键的冷却**。`retry_at` 为当前时间加上解析到的 `Resets in` 时长（由 `<n>d`、`h`、`m`、`s` 片段组成，如 `2h3m`、`1d 4h`、`45s`）；无法解析时加 **60 分钟**。冷却到期后自动失效，也可以用 `accounts cooldown clear` 清除。同一账号上的其他模型家族不受影响。
+任务因 agy 的配额错误失败时（`RESOURCE_EXHAUSTED`，并带有 `Individual quota reached` 或 `Weekly quota reached`），companion 会记录一条**以账号和配额池为键的冷却**（键为 `<账号>|gemini` 或 `<账号>|other`，所有 Gemini 家族共用一条）。`retry_at` 为当前时间加上解析到的 `Resets in` 时长（由 `<n>d`、`h`、`m`、`s` 片段组成，如 `2h3m`、`1d 4h`、`45s`）；无法解析时加 **60 分钟**。冷却到期后自动失效，也可以用 `accounts cooldown clear` 清除。同一账号上的其他模型家族不受影响。
 
 随后任务按以下方式恢复，最多额外尝试 3 次：
 
@@ -399,7 +399,7 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
   update-check.json              每日 npm 更新检查缓存（latest、checked_at、notified_version）
 ```
 
-`pool.json` 包含 `accounts`（添加顺序是最后的排序依据）、`cooldowns`（键为 `<name>|<family>`）、`leases`、`conversations`（会话 ID 到账号的映射）、`loans` 和 `quota` 快照。写入是原子的，并且加锁。文件不存在等同于空池；文件损坏会报错，不会被自动重置；`schema` 比当前版本新时会拒绝使用（`pool.json was written by a newer agy-crew`）。
+`pool.json` 包含 `accounts`（添加顺序是最后的排序依据）、`cooldowns`（键为 `<name>|<配额池>`）、`leases`、`conversations`（会话 ID 到账号的映射）、`loans` 和 `quota` 快照。写入是原子的，并且加锁。文件不存在等同于空池；文件损坏会报错，不会被自动重置；`schema` 比当前版本新时会拒绝使用（`pool.json was written by a newer agy-crew`）。
 
 ### 设置与 `setup --apply`
 

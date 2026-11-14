@@ -58,11 +58,11 @@ If the user already has accounts elsewhere, offer `accounts import` instead of a
 | `ready` | Idle and usable | None. |
 | `busy n` | `n` runs hold it; the `PARALLEL` column gives its concurrent-run limit | Normal. A new `auto` run prefers an account with a free slot. |
 | `held` | Another process outside agy-crew is using its credential | Runs skip it; a conversation bound to it borrows another account's credential. Leave it alone; the hold ends when that process releases it or exits. |
-| `cooling` | A model family hit its quota; other families still work. The `COOLDOWNS` section lists each family with `until <time> (in <duration>)` | Wait until then, use another model family or account. Do not clear the cooldown on your own. |
+| `cooling` | A quota pool hit its quota; the other pool still works. The `COOLDOWNS` section lists each pool with `until <time> (in <duration>)` | Wait until then, use a model from the other pool, or another account. Do not clear the cooldown on your own. |
 | `needs login` | agy rejected the credential | Tell the user to run `agy-crew accounts login <name>`. Never retry. |
 | `disabled` | Excluded from selection | `enable` only if the user asks. |
 
-Cooldowns are per account and per model family (for example `gemini-3.8-flash`, whatever the effort suffix). The `QUOTA` table shows the short-window (5H) and weekly remaining percent and reset time per quota pool, with times in local clock (`HH:MM` for today, otherwise `MM-DD HH:MM`) and `AS OF` giving the snapshot age; they are cached, so `quota --refresh` is needed for current numbers. Refresh only when the user asks about current quota or a run failed with a quota error, not for routine checks.
+Cooldowns are per account and per quota pool: `gemini` for every Gemini model, `other` for everything else. The `QUOTA` table shows the short-window (5H) and weekly remaining percent and reset time per quota pool, with times in local clock (`HH:MM` for today, otherwise `MM-DD HH:MM`) and `AS OF` giving the snapshot age; they are cached, so `quota --refresh` is needed for current numbers. Refresh only when the user asks about current quota or a run failed with a quota error, not for routine checks.
 
 ## Choosing an account for a run
 

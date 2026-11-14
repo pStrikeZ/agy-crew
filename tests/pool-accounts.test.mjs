@@ -141,7 +141,7 @@ test('accounts parallel sets and shows the per-account run limit', () => {
 test('remove previews without --yes, then deletes account data and bindings', () => {
   const sb = sandbox('pool-remove');
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }], (p) => {
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
+    p.cooldowns[`a|gemini`] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
     p.quota.a = { refreshed_at: 'x', pools: {} };
     p.conversations.c1 = { account: 'a' };
     p.conversations.c2 = { account: 'a' };
@@ -173,16 +173,16 @@ test('remove refuses while the account is leased or lending', () => {
   assert.equal(readPool(sb).accounts.length, 1);
 });
 
-test('cooldown clear removes one family or all of an account', () => {
+test('cooldown clear removes one quota pool or all of an account', () => {
   const sb = sandbox('pool-cooldown');
   const later = new Date(Date.now() + 3600_000).toISOString();
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => {
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: later };
+    p.cooldowns[`a|gemini`] = { retry_at: later };
     p.cooldowns['a|claude-sonnet-4-6'] = { retry_at: later };
   });
   assert.match(list(sb).accounts[0].state, new RegExp(`cooling .* until ${later}`));
   assert.equal(run(sb, ['accounts', 'cooldown', 'clear', 'a', '--family', FAMILY]).code, 0);
-  assert.deepEqual(Object.keys(readPool(sb).cooldowns), ['a|claude-sonnet-4-6']);
+  assert.deepEqual(Object.keys(readPool(sb).cooldowns), ['a|other']);
   assert.equal(run(sb, ['accounts', 'cooldown', 'clear', 'a']).code, 0);
   assert.deepEqual(readPool(sb).cooldowns, {});
 });
@@ -224,7 +224,7 @@ test('hold acquire refuses unknown, busy and cooling accounts, but not disabled 
     { name: 'out', email: 'out@example.com', auth_error_at: '2026-01-01T00:00:00Z' },
   ], (p) => {
     p.leases.push({ id: 'l', account: 'busy', pid: process.pid, role: 'run' });
-    p.cooldowns[`cool|${FAMILY}`] = { retry_at: later };
+    p.cooldowns[`cool|gemini`] = { retry_at: later };
   });
   const refused = (name) => {
     const r = run(sb, ['accounts', 'hold', 'acquire', name, '--pid', String(process.pid), '--family', FAMILY, '--json']);
@@ -258,7 +258,7 @@ test('cooldown record adds a quota cooldown and never shortens one in force', ()
   const sooner = new Date(Date.now() + 3600_000).toISOString();
   assert.equal(JSON.parse(record(later).stdout).cooldown.retry_at, later);
   assert.equal(JSON.parse(record(sooner).stdout).cooldown.retry_at, later);
-  assert.equal(readPool(sb).cooldowns[`a|${FAMILY}`].reason, 'quota_exhausted');
+  assert.equal(readPool(sb).cooldowns[`a|gemini`].reason, 'quota_exhausted');
   assert.equal(JSON.parse(record('2000-01-01T00:00:00Z').stdout).cooldown.retry_at, later);
   assert.equal(run(sb, ['accounts', 'cooldown', 'record', 'a', '--family', FAMILY, '--retry-at', 'soon']).code, 1);
   assert.equal(run(sb, ['accounts', 'cooldown', 'record', 'a', '--retry-at', later]).code, 1);
@@ -294,7 +294,7 @@ test('leases of dead processes are reaped on the next update', async () => {
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => {
     p.leases.push({ id: 'dead', account: 'a', pid: dead, job_id: null, role: 'run', started_at: '' });
     p.leases.push({ id: 'live', account: 'a', pid: process.pid, job_id: null, role: 'run', started_at: '' });
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: '2000-01-01T00:00:00Z' };
+    p.cooldowns[`a|gemini`] = { retry_at: '2000-01-01T00:00:00Z' };
   });
   assert.match(list(sb).accounts[0].state, /^busy 1$/);
   const pool = readPool(sb);
@@ -429,7 +429,7 @@ test('start refuses unknown, busy, disabled and signed-out accounts without laun
 test('start notes a cooldown but still launches', () => {
   const sb = sandbox('pool-start-cooling');
   const later = new Date(Date.now() + 3600_000).toISOString();
-  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => { p.cooldowns[`a|${FAMILY}`] = { retry_at: later }; });
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => { p.cooldowns[`a|gemini`] = { retry_at: later }; });
   const r = run(sb, ['start', 'a']);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stderr, new RegExp(`no ${FAMILY} quota until ${later}`));
@@ -504,13 +504,13 @@ test('a shared start does not join a session whose credential has no quota for i
   const sb = sandbox('pool-start-shared-join-cooling');
   const later = new Date(Date.now() + 3600_000).toISOString();
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }],
-    (p) => { p.cooldowns['a|gemini-3.1-pro'] = { retry_at: later }; });
+    (p) => { p.cooldowns['a|other'] = { retry_at: later }; });
   const first = runAsync(sb, ['start'], { FAKE_AGY_SLEEP_MS: '1500' });
   await leasesWhileRunning(sb, 1);
   assert.equal(readPool(sb).shared.account, 'a');
-  const r = run(sb, ['start', '--model', 'gemini-3.1-pro-high']);
+  const r = run(sb, ['start', '--model', 'claude-sonnet-4-6']);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, new RegExp(`running shared session \\(agy-crew pid \\d+\\) uses account a, which has no gemini-3.1-pro quota until ${later}`));
+  assert.match(r.stderr, new RegExp(`running shared session \\(agy-crew pid \\d+\\) uses account a, which has no claude-sonnet-4-6 quota until ${later}`));
   assert.match(r.stderr, /exit every shared agy, then start again so an account with quota is picked/);
   assert.deepEqual(readPool(sb).leases.map((l) => l.account), ['a'], 'no second hold');
   assert.equal((await first).code, 0);
@@ -542,7 +542,7 @@ test('shared start is refused without launching agy when no account can lend', (
   const later = new Date(Date.now() + 3600_000).toISOString();
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }, { name: 'off', email: 'off@example.com', disabled: true }],
     (p) => {
-      p.cooldowns[`a|${FAMILY}`] = { retry_at: later };
+      p.cooldowns[`a|gemini`] = { retry_at: later };
       p.leases.push({ id: 'busy', account: 'b', pid: process.pid, role: 'run' });
     });
   const r = run(sb, ['start']);
@@ -553,7 +553,7 @@ test('shared start is refused without launching agy when no account can lend', (
   assert.match(r.stderr, /off: disabled/);
   assert.deepEqual(agyCalls(sb), []);
   assert.equal(readPool(sb).shared, null);
-  assert.equal(run(sb, ['start', '--model', 'gemini-3.1-pro-high']).code, 0, 'another family still has a lender');
+  assert.equal(run(sb, ['start', '--model', 'claude-sonnet-4-6']).code, 0, 'the other quota pool still has a lender');
 });
 
 test('a shared session whose process died gives the credential back on the next pool update', async () => {

@@ -197,7 +197,7 @@ Automatic since 0.4: when the companion creates `.agy-crew/` for the first time 
 
 ## Accounts
 
-The account pool lets concurrent jobs run on different agy accounts and tracks quota per account and per model family. It is global to the user, not per repository.
+The account pool lets concurrent jobs run on different agy accounts and tracks quota per account and per quota pool. It is global to the user, not per repository.
 
 **Two kinds of account.**
 
@@ -216,7 +216,7 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 | `accounts quota [<name>...] [--refresh] [--json]` | Print the `QUOTA` table and `COOLDOWNS` section described above for the named accounts (all by default), from cached snapshots. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
 | `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
 | `accounts parallel <name> [<n>]` | How many agent-dispatched runs may hold one account at once. Without `<n>`, print the current limit. With `<n>`, set it (1–64); unset means 1. It does not require an idle account and does not touch its token. Interactive `start`/`omp` still hold the account exclusively, and a credential on loan ignores the limit |
-| `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
+| `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one quota pool (named by any family in it) or for all |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | Record a quota cooldown observed outside agy-crew, until the given ISO 8601 time. A time already past, or earlier than a cooldown in force, changes nothing. `--json` prints `{ "cooldown": ... }` with the cooldown now in force |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | Keep agy-crew off an account while another process uses its credential. See [External holds](#external-holds) |
 | `start [<name>] [--model <id>] [-- <agy args>...]` | Run agy interactively in this terminal, in the current directory, in the shared home with the credential of `<name>` or, without one, of an idle account with quota. See [Interactive sessions](#interactive-sessions) |
@@ -243,7 +243,7 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 | Request | Behaviour |
 |---|---|
 | `live` | The user's own login |
-| `<name>` | That account. Fails if it is unknown, disabled or needs login. If it is cooling for the model family, fails with its `retry_at` and a suggestion to use `--account auto` or another model family |
+| `<name>` | That account. Fails if it is unknown, disabled or needs login. If it is cooling for the model's quota pool, fails with its `retry_at` and a suggestion to use `--account auto` or a model from the other pool |
 | `auto` | With no enabled pool account, live. Otherwise the best candidate below |
 
 **Selection ranking for `auto`.** A candidate is an enabled account that is not part of a credential loan, with a token file, no authentication error, no active cooldown for the model family, no cached Cloud Code snapshot reporting zero remaining quota for the family's quota pool with a reset time in the future, and fewer active leases than its parallel limit (`accounts parallel`, default 1). Candidates are ranked by:
@@ -263,7 +263,7 @@ Selection and the lease that marks the account busy are taken in one locked upda
 
 A **model family** is the model id without its trailing effort suffix (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`): `gemini-3.8-flash-low` belongs to `gemini-3.8-flash`. Cloud Code reports quota in two **quota pools**: `gemini` (families starting with `gemini`) and `other`.
 
-When a run fails with agy's quota error (`RESOURCE_EXHAUSTED` together with `Individual quota reached` or `Weekly quota reached`), the companion records a **cooldown keyed by account and model family**. `retry_at` is the current time plus the parsed `Resets in` text (a sequence of `<n>d`, `h`, `m`, `s` tokens such as `2h3m`, `1d 4h` or `45s`), or plus **60 minutes** when the text cannot be parsed. Cooldowns expire on their own and can be cleared with `accounts cooldown clear`. Other families on the same account stay usable.
+When a run fails with agy's quota error (`RESOURCE_EXHAUSTED` together with `Individual quota reached` or `Weekly quota reached`), the companion records a **cooldown keyed by account and quota pool** (`<name>|gemini` or `<name>|other`, so every Gemini family shares one). `retry_at` is the current time plus the parsed `Resets in` text (a sequence of `<n>d`, `h`, `m`, `s` tokens such as `2h3m`, `1d 4h` or `45s`), or plus **60 minutes** when the text cannot be parsed. Cooldowns expire on their own and can be cleared with `accounts cooldown clear`. The other quota pool on the same account stays usable. Cooldowns an older version recorded per model family move to their pool the next time the pool state is updated, keeping the one that ends last. `--family <f>` on the `cooldown` and `hold` commands takes any family or pool name; it is mapped to its pool.
 
 The run then recovers, with at most three extra attempts:
 
@@ -349,7 +349,7 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
   update-check.json              daily npm update-check cache (latest, checked_at, notified_version)
 ```
 
-`pool.json` holds `accounts` (insertion order is the final tie-break; each account's optional `parallel` limits concurrent runs, default 1), `cooldowns` (keyed `<name>|<family>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
+`pool.json` holds `accounts` (insertion order is the final tie-break; each account's optional `parallel` limits concurrent runs, default 1), `cooldowns` (keyed `<name>|<quota pool>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
 
 ### Settings and `setup --apply`
 

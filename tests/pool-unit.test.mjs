@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyFailureText, isAuthFailed, isQuotaExhausted, isUpstreamUnavailable, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
+import { classifyFailureText, cooldownKey, isAuthFailed, isQuotaExhausted, isUpstreamUnavailable, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
 import { recordCooldown } from '../companion/pool/lease.mjs';
 import { accountEnv } from '../companion/pool/env.mjs';
 import { chooseAccount, chooseLender, parallelOf } from '../companion/pool/select.mjs';
@@ -62,12 +62,12 @@ test('a short 503 cooldown never shortens a quota cooldown that is still running
   updatePool((pool) => { pool.cooldowns = { [`z|${FAMILY}`]: { retry_at: later, reason: 'quota_exhausted' } }; });
   const kept = recordCooldown('z', FAMILY, 'UNAVAILABLE (code 503)', null, 'upstream_unavailable');
   assert.equal(kept.retry_at, later);
-  assert.equal(loadPool().cooldowns[`z|${FAMILY}`].reason, 'quota_exhausted');
+  assert.equal(loadPool().cooldowns[`z|gemini`].reason, 'quota_exhausted');
 
   const fresh = recordCooldown('y', FAMILY, 'UNAVAILABLE (code 503)', 'job1', 'upstream_unavailable');
   assert.equal(fresh.reason, 'upstream_unavailable');
   assert.equal(Date.parse(fresh.retry_at) - Date.parse(fresh.recorded_at), 3 * 60_000);
-  assert.equal(loadPool().cooldowns[`y|${FAMILY}`].job_id, 'job1');
+  assert.equal(loadPool().cooldowns[`y|gemini`].job_id, 'job1');
 
   const quota = recordCooldown('y', FAMILY, 'Resets in 1h', null);
   assert.equal(quota.reason, 'quota_exhausted', 'a quota failure replaces the short cooldown');
@@ -185,23 +185,23 @@ test('auto selection skips disabled, auth-failed, cooling and exhausted-snapshot
   const pool = poolOf('a', 'b', 'c', 'd');
   pool.accounts[0].disabled = true;
   pool.accounts[1].auth_error_at = '2026-06-01T00:00:00Z';
-  pool.cooldowns[`c|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z' };
+  pool.cooldowns[`c|gemini`] = { retry_at: '2026-06-01T14:00:00Z' };
   assert.equal(choose(pool).account, 'd');
   pool.quota.d = { pools: { gemini: { short: { remaining: 0, reset_at: '2026-06-01T13:00:00Z' } } } };
   const none = choose(pool);
   assert.equal(none.error.reason, 'quota_exhausted');
   assert.equal(none.error.retry_at, '2026-06-01T13:00:00Z');
   assert.match(none.error.message, /--account live/);
-  pool.cooldowns[`c|${FAMILY}`].retry_at = '2026-06-01T11:00:00Z'; // already over
+  pool.cooldowns[`c|gemini`].retry_at = '2026-06-01T11:00:00Z'; // already over
   assert.equal(choose(pool).account, 'c');
-  pool.cooldowns[`c|other-family`] = { retry_at: '2026-06-01T14:00:00Z' }; // other family does not matter
+  pool.cooldowns[`c|other`] = { retry_at: '2026-06-01T14:00:00Z' }; // other family does not matter
   assert.equal(choose(pool).account, 'c');
 });
 
 test('a pool that is cooling only because of 503s reports upstream_unavailable', () => {
   const pool = poolOf('a', 'b');
-  pool.cooldowns[`a|${FAMILY}`] = { retry_at: '2026-06-01T12:03:00Z', reason: 'upstream_unavailable' };
-  pool.cooldowns[`b|${FAMILY}`] = { retry_at: '2026-06-01T12:02:00Z', reason: 'upstream_unavailable' };
+  pool.cooldowns[`a|gemini`] = { retry_at: '2026-06-01T12:03:00Z', reason: 'upstream_unavailable' };
+  pool.cooldowns[`b|gemini`] = { retry_at: '2026-06-01T12:02:00Z', reason: 'upstream_unavailable' };
   const none = choose(pool);
   assert.equal(none.error.reason, 'upstream_unavailable');
   assert.equal(none.error.retry_at, '2026-06-01T12:02:00Z');
@@ -211,7 +211,7 @@ test('a pool that is cooling only because of 503s reports upstream_unavailable',
   assert.equal(explicit.error.reason, 'upstream_unavailable');
   assert.match(explicit.error.message, /unavailable upstream \(503\) for gemini-3\.8-flash; retry after 2026-06-01T12:03:00Z/);
 
-  pool.cooldowns[`b|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z', reason: 'quota_exhausted' };
+  pool.cooldowns[`b|gemini`] = { retry_at: '2026-06-01T14:00:00Z', reason: 'quota_exhausted' };
   assert.equal(choose(pool).error.reason, 'quota_exhausted', 'any quota cooldown makes it a quota error');
 
   const bound = choose(pool, { conversation: 'c1', conversationAccount: 'a' });
@@ -228,7 +228,7 @@ test('explicit selection refuses unknown, disabled, login-needed and cooling acc
   pool.accounts[1].auth_error_at = 'x';
   assert.match(choose(pool, { requested: 'b' }).error.message, /needs login/);
   pool.accounts[1].auth_error_at = null;
-  pool.cooldowns[`b|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z' };
+  pool.cooldowns[`b|gemini`] = { retry_at: '2026-06-01T14:00:00Z' };
   const cooling = choose(pool, { requested: 'b' });
   assert.equal(cooling.error.reason, 'quota_exhausted');
   assert.match(cooling.error.message, /2026-06-01T14:00:00Z/);
@@ -244,7 +244,7 @@ test('a bound conversation must use its account; cooling asks for a loan', () =>
   assert.match(choose(pool, { ...bound, requested: 'b' }).error.message, /conversation c1 belongs to account a/);
   assert.equal(choose(pool, { conversation: 'c0', conversationAccount: 'live' }).account, 'live');
   assert.match(choose(pool, { conversation: 'c0', conversationAccount: 'live', requested: 'a' }).error.message, /belongs to account live/);
-  pool.cooldowns[`a|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z' };
+  pool.cooldowns[`a|gemini`] = { retry_at: '2026-06-01T14:00:00Z' };
   const loan = choose(pool, bound);
   assert.equal(loan.account, 'a');
   assert.equal(loan.needsLoan, true);
@@ -260,7 +260,7 @@ test('chooseLender needs an idle, usable account outside any loan', () => {
   pool.loans.push({ id: 'x', borrower: 'c', lender: 'a', pid: 1 });
   assert.equal(lender(), null);
   pool.loans = [];
-  pool.cooldowns[`c|${FAMILY}`] = { retry_at: '2026-06-01T14:00:00Z' };
+  pool.cooldowns[`c|gemini`] = { retry_at: '2026-06-01T14:00:00Z' };
   assert.equal(lender(), null);
 });
 
@@ -308,4 +308,16 @@ test('readToken takes the email from an id_token JWT or a plain id_token_email',
     write({ token, id_token_email: 'not an email' });
     assert.equal(readToken(home).email, null);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a cooldown holds for every family of its quota pool, and older per-family keys move to their pool', () => {
+  assert.equal(cooldownKey('a', 'gemini-3.8-flash'), 'a|gemini');
+  assert.equal(cooldownKey('a', 'gemini-4-carbon'), 'a|gemini');
+  assert.equal(cooldownKey('a', 'claude-sonnet-4-6'), 'a|other');
+  assert.equal(cooldownKey('a', 'gpt-oss-120b'), 'a|other');
+
+  const pool = poolOf('a');
+  pool.cooldowns[cooldownKey('a', 'gemini-3.8-flash')] = { retry_at: '2026-06-01T14:00:00Z', reason: 'quota_exhausted' };
+  assert.equal(choose(pool, { family: 'gemini-4-carbon' }).error.reason, 'quota_exhausted', 'a sibling family is cooling too');
+  assert.equal(choose(pool, { family: 'claude-sonnet-4-6' }).account, 'a', 'the other pool still has quota');
 });

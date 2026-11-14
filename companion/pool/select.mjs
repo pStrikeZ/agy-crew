@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { accountHome, tokenPath } from './state.mjs';
 import { accountInLoan } from './loans.mjs';
-import { quotaPool } from './results.mjs';
+import { cooldownKey, quotaPool } from './results.mjs';
 
 export const findAccount = (pool, name) => pool.accounts.find((a) => a.name === name) || null;
 export const leasesOn = (pool, name) => pool.leases.filter((l) => l.account === name);
@@ -23,7 +23,7 @@ const atParallel = (pool, name) => {
 };
 
 export function activeCooldown(pool, name, family, now) {
-  const c = pool.cooldowns[`${name}|${family}`];
+  const c = pool.cooldowns[cooldownKey(name, family)];
   return c && Date.parse(c.retry_at) > now ? c : null;
 }
 

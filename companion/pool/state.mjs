@@ -3,6 +3,7 @@ import path from 'node:path';
 import { PRODUCT, globalHome } from '../identity.mjs';
 import { withStateLock, replaceFile } from '../state-lock.mjs';
 import { readToken } from './token.mjs';
+import { cooldownKey } from './results.mjs';
 
 export const POOL_SCHEMA = 1;
 export const RESERVED_NAMES = ['live', 'auto'];
@@ -123,7 +124,21 @@ export function reap(pool, now = Date.now()) {
   pool.loans = keep;
   try { settleShared(pool); } catch { /* retry on the next update */ }
   for (const [key, c] of Object.entries(pool.cooldowns)) if (Date.parse(c.retry_at) <= now) delete pool.cooldowns[key];
+  poolCooldowns(pool);
   return pool;
+}
+
+/** Cooldowns recorded per model family (before they were kept per quota pool) move to their
+ *  pool's key; families of one pool merge into the cooldown that ends last. */
+function poolCooldowns(pool) {
+  for (const [key, c] of Object.entries(pool.cooldowns)) {
+    const [account, family] = key.split('|');
+    const pooled = cooldownKey(account, family);
+    if (pooled === key) continue;
+    delete pool.cooldowns[key];
+    const known = pool.cooldowns[pooled];
+    if (!known || Date.parse(c.retry_at) > Date.parse(known.retry_at)) pool.cooldowns[pooled] = c;
+  }
 }
 
 export function updatePool(change) {

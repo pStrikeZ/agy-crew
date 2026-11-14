@@ -16,7 +16,7 @@ import { accountDir, accountHome, accountSettingsPath, beginSharedFiles, loadPoo
   sharedHome, tokenPath, updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
 import { activeCooldown, chooseLender, DEFAULT_PARALLEL, exhaustedSnapshot, findAccount, holdOn, parallelOf } from './pool/select.mjs';
-import { modelFamily } from './pool/results.mjs';
+import { cooldownKey, modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { refreshQuotas } from './pool/quota.mjs';
 import { formatAgo, renderCooldowns, renderQuotaTable, renderTable } from './pool/format.mjs';
@@ -336,7 +336,7 @@ function cmdCooldown(opts) {
   const name = opts._[2];
   const cleared = updatePool((pool) => {
     requireAccount(pool, name);
-    const keys = Object.keys(pool.cooldowns).filter((k) => k.startsWith(`${name}|`) && (!opts.family || k === `${name}|${opts.family}`));
+    const keys = Object.keys(pool.cooldowns).filter((k) => k.startsWith(`${name}|`) && (!opts.family || k === cooldownKey(name, opts.family)));
     for (const key of keys) delete pool.cooldowns[key];
     return keys.length;
   });
@@ -350,7 +350,7 @@ function cmdCooldownRecord(opts) {
   if (!opts.family || Number.isNaN(retryAt)) throw new PoolError(COOLDOWN_USAGE);
   const cooldown = updatePool((pool) => {
     requireAccount(pool, name);
-    const key = `${name}|${opts.family}`;
+    const key = cooldownKey(name, opts.family);
     const current = pool.cooldowns[key];
     if (retryAt <= Date.now() || (current && Date.parse(current.retry_at) >= retryAt)) return current || null;
     pool.cooldowns[key] = { retry_at: new Date(retryAt).toISOString(), reason: 'quota_exhausted',

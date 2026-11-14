@@ -44,6 +44,9 @@ export function sandbox(label = 'case', { git = true } = {}) {
   if (git) {
     const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
     if (init.status !== 0) throw new Error(`git init failed: ${init.stderr}`);
+    // Fixture commits must never ask for a signature, whatever the user's global git config says.
+    const unsigned = spawnSync('git', ['config', '--local', 'commit.gpgsign', 'false'], { cwd: repo, encoding: 'utf8' });
+    if (unsigned.status !== 0) throw new Error(`git config failed: ${unsigned.stderr}`);
 
     // Calling-agent hygiene (spec ".agy-crew/ hygiene"): the companion never
     // git-ignores its own state, so the caller must. Without this the implement

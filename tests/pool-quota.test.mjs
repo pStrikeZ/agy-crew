@@ -37,7 +37,7 @@ async function cloudCode(accept, summary = SUMMARY) {   // summary may be a func
 test('quota --refresh stores snapshots, clears recovered cooldowns, and never prints tokens', async () => {
   const sb = sandbox('pool-quota');
   seedPool(sb, [{ name: 'a', email: 'a@x' }], (p) => {
-    p.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
+    p.cooldowns[`a|gemini`] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
     p.cooldowns['a|claude-sonnet-4-6'] = { retry_at: new Date(Date.now() + 3600_000).toISOString() };
   });
   const server = await cloudCode((token) => token === 'fake-access');

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { accountEnv } from './env.mjs';
 import { accountHome, loadPool, poolExists, updatePool } from './state.mjs';
-import { parseResetsIn } from './results.mjs';
+import { cooldownKey, parseResetsIn } from './results.mjs';
 import { chooseAccount, chooseLender, findAccount, leasesOn } from './select.mjs';
 import { beginLoan, endLoan } from './loans.mjs';
 
@@ -90,7 +90,7 @@ export function recordCooldown(name, family, text, jobId, kind = 'quota_exhauste
     reason: kind, recorded_at: new Date(now).toISOString(), job_id: jobId || null,
     message: String(text).trim().slice(0, 500) };
   return updatePool((pool) => {
-    const key = `${name}|${family}`;
+    const key = cooldownKey(name, family);
     const current = pool.cooldowns[key];
     if (kind === 'upstream_unavailable' && current && Date.parse(current.retry_at) > Date.parse(cooldown.retry_at)) return current;
     pool.cooldowns[key] = cooldown;

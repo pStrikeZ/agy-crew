@@ -12,6 +12,12 @@ export function quotaPool(family) {
   return String(family).startsWith('gemini') ? 'gemini' : 'other';
 }
 
+/** Cooldowns are kept per account and quota pool: every Gemini family draws on one
+ *  pool, so a cooldown on one of them holds for all. Any family names its pool. */
+export function cooldownKey(account, family) {
+  return `${account}|${quotaPool(family)}`;
+}
+
 export function isQuotaExhausted(text) {
   const t = String(text || '').toLowerCase();
   return t.includes('resource_exhausted') && (t.includes('individual quota reached') || t.includes('weekly quota reached'));
