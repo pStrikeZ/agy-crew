@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sandbox, run, COMPANION, FAKE_AGY } from './helpers.mjs';
 import { generateSkills, ROOT } from '../scripts/generate-skills.mjs';
-import { powershellTargets } from '../companion/install.mjs';
+import { extensionContent, powershellTargets } from '../companion/install.mjs';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const PERSONAS = ['accounts', 'ask', 'implementer', 'jobs', 'lead', 'researcher', 'reviewer', 'staffer'];
@@ -135,8 +135,14 @@ test('--all, --status and uninstall --all keep user content', () => {
   const own = path.join(sb.home, '.claude', 'skills', 'my-own-skill');
   fs.mkdirSync(own, { recursive: true });
   fs.writeFileSync(path.join(own, 'SKILL.md'), 'mine');
+  // A loader written by an older install is retired by install and uninstall.
+  const ompExtension = path.join(sb.home, '.omp', 'agent', 'extensions', 'agy-crew-omp.ts');
+  fs.mkdirSync(path.dirname(ompExtension), { recursive: true });
+  fs.writeFileSync(ompExtension, extensionContent(path.join(sb.root, 'gone')));
   const r = install(sb, ['--all']);
   assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /omp\s+extension removed/);
+  assert.equal(fs.existsSync(ompExtension), false, 'install removes the loader it used to write');
   for (const host of Object.keys(HOST_DIRS)) {
     assert.equal(fs.readdirSync(skillsDir(sb, host)).filter(n => n.startsWith('agy-crew-')).length, 8, host);
   }
@@ -145,18 +151,15 @@ test('--all, --status and uninstall --all keep user content', () => {
   const status = JSON.parse(install(sb, ['--status', '--json']).stdout);
   assert.equal(status.hosts.length, 6);
   assert.ok(status.hosts.every(h => h.skills.every(s => s.state === 'managed-current')));
+  assert.ok(status.hosts.every(h => h.extension === undefined), 'install reports no omp extension');
   assert.equal(status.bundles.filter(b => b.current).length, 1);
   const text = install(sb, ['--status']);
   assert.equal(text.code, 0);
-  assert.equal((text.stdout.match(/managed-current/g) || []).length, 49);
-  const ompExtension = path.join(sb.home, '.omp', 'agent', 'extensions', 'agy-crew-omp.ts');
-  assert.ok(fs.existsSync(ompExtension));
-  const loader = fs.readFileSync(ompExtension, 'utf8');
-  assert.match(loader, /^\/\/ managed by agy-crew install/m);
-  assert.match(loader, /omp\/extension\.mjs/);
-  assert.equal(status.hosts.find(h => h.host === 'omp').extension.state, 'managed-current');
+  assert.equal((text.stdout.match(/managed-current/g) || []).length, 48);
   assert.match(text.stdout, /\(current\)/);
 
+  fs.mkdirSync(path.dirname(ompExtension), { recursive: true });
+  fs.writeFileSync(ompExtension, extensionContent(path.join(sb.root, 'gone')));
   const u = run(sb, ['uninstall', '--all'], env(sb));
   assert.equal(u.code, 0, u.stderr);
   assert.equal((u.stdout.match(/8 removed/g) || []).length, 6);
@@ -445,46 +448,54 @@ test('the PowerShell completer answers', { skip: spawnSync('pwsh', ['-NoProfile'
   assert.deepEqual(ask('agy-crew ask --mo'), ['--model']);
 });
 
-test('--hosts omp installs the companion extension, status sees it, uninstall removes it', () => {
+test('--hosts omp installs only skills and retires a legacy extension', () => {
   const sb = sandbox('inst-omp-plugin');
   const extension = path.join(sb.home, '.omp', 'agent', 'extensions', 'agy-crew-omp.ts');
+  fs.mkdirSync(path.dirname(extension), { recursive: true });
+  fs.writeFileSync(extension, extensionContent());
 
   const r = install(sb, ['--hosts', 'omp', '--no-completion']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /extension created/);
-  assert.ok(fs.existsSync(extension));
-  const loader = fs.readFileSync(extension, 'utf8');
-  assert.match(loader, /^\/\/ managed by agy-crew install/m);
-  assert.match(loader, /export \{ default \} from "file:/);
+  assert.match(r.stdout, /extension removed/);
+  assert.equal(fs.existsSync(extension), false);
+  assert.equal(fs.readdirSync(skillsDir(sb, 'omp')).filter(n => n.startsWith('agy-crew-')).length, 8);
 
   const second = install(sb, ['--hosts', 'omp', '--no-completion']);
-  assert.match(second.stdout, /extension unchanged/);
+  assert.equal(second.code, 0, second.stderr);
+  assert.doesNotMatch(second.stdout, /extension/);
 
   const status = JSON.parse(install(sb, ['--status', '--json']).stdout);
-  assert.equal(status.hosts.find(h => h.host === 'omp').extension.state, 'managed-current');
+  assert.equal(status.hosts.find(h => h.host === 'omp').extension, undefined);
+  assert.equal(fs.existsSync(extension), false, 'install never writes the extension');
 
   const u = run(sb, ['uninstall', '--hosts', 'omp'], env(sb));
   assert.equal(u.code, 0, u.stderr);
-  assert.match(u.stdout, /extension removed/);
-  assert.equal(fs.existsSync(extension), false);
+  assert.match(u.stdout, /8 removed/);
 });
 
-test('--hosts claude does not install the omp extension', () => {
+test('install retires the legacy omp extension even for another host, leaving a foreign one', () => {
   const sb = sandbox('inst-omp-not-selected');
   const extension = path.join(sb.home, '.omp', 'agent', 'extensions', 'agy-crew-omp.ts');
+  fs.mkdirSync(path.dirname(extension), { recursive: true });
+  fs.writeFileSync(extension, extensionContent());
   const r = install(sb, ['--hosts', 'claude', '--no-completion']);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(fs.existsSync(extension), false);
+
+  fs.mkdirSync(path.dirname(extension), { recursive: true });
+  fs.writeFileSync(extension, '// my own loader\n');
+  const again = install(sb, ['--hosts', 'claude', '--no-completion']);
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(fs.readFileSync(extension, 'utf8'), '// my own loader\n');
 });
 
-test('a foreign omp extension file blocks install all-or-nothing', () => {
+test('a foreign omp extension file blocks nothing and is left alone', () => {
   const sb = sandbox('inst-omp-conflict');
   const extension = path.join(sb.home, '.omp', 'agent', 'extensions', 'agy-crew-omp.ts');
   fs.mkdirSync(path.dirname(extension), { recursive: true });
   fs.writeFileSync(extension, '// my own loader\n');
   const r = install(sb, ['--hosts', 'omp', '--no-completion']);
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /agy-crew-omp\.ts/);
+  assert.equal(r.code, 0, r.stderr);
   assert.equal(fs.readFileSync(extension, 'utf8'), '// my own loader\n');
-  assert.equal(fs.existsSync(path.join(sb.home, '.omp', 'agent', 'skills', 'agy-crew-ask')), false);
+  assert.ok(fs.existsSync(path.join(sb.home, '.omp', 'agent', 'skills', 'agy-crew-ask')));
 });

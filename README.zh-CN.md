@@ -80,7 +80,7 @@ node agy-crew/companion/agy-companion.mjs install
 | OpenCode（`opencode`） | `~/.config/opencode/skills` |
 | DeepSeek Harness（`dsh`） | `~/.dsh/skills` |
 
-技能只渲染一次，写入 `~/.agy-crew/bundles/<version>-<digest>/`，其中 companion 路径为绝对路径；每个 harness 得到指向该 bundle 的目录链接（`agy-crew-<persona>`，Windows 上是 junction，不需要提权）。技能目录中任何不是安装器创建的内容都视为用户内容，绝不覆盖；出现任何冲突时，整次运行会在写入之前中止，并打印相关路径和处理办法。`install` 不覆盖 Pi，请使用下面的 Pi 软件包方式。
+技能只渲染一次，写入 `~/.agy-crew/bundles/<version>-<digest>/`，其中 companion 路径为绝对路径；每个 harness 得到指向该 bundle 的目录链接（`agy-crew-<persona>`，Windows 上是 junction，不需要提权）。技能目录中任何不是安装器创建的内容都视为用户内容，绝不覆盖；出现任何冲突时，整次运行会在写入之前中止，并打印相关路径和处理办法。`install` 不覆盖 Pi，请使用下面的 Pi 软件包方式。`install` 也不再写入 omp 插件 loader：它只在 `agy-crew omp` 运行期间安装扩展，结束后卸载，并会清除旧版本安装留下的 loader。
 
 安装后重启 harness 或开启新会话，然后按[首次使用](#首次使用)继续。
 
@@ -207,30 +207,24 @@ agy-crew accounts list              # work1 显示为 ready
 
 账号触及配额上限时，companion 会为该账号和模型家族记录冷却，直到 agy 报告的重置时间，没有报告则为 60 分钟。尚未开始会话的任务会转到另一个账号；已经在会话中的任务仍绑定原账号，因为会话历史保存在那里。如果该账号正在冷却，就由一个空闲账号在本次运行中出借凭据，结束后令牌文件会还原，崩溃后也会恢复。所有账号都无法继续时，任务以 `quota_exhausted` 结束并给出 `retry_at`，由你决定何时 `continue`。上游 503（`No capacity available for model ...`）会让该账号冷却 3 分钟，下一次运行改用其他账号；没有改动过工作区的任务会用原始提示词开新会话重跑，而不是继续旧会话。如果任务仍以 `upstream_unavailable` 结束且 agy 还什么都没做，请重新开始任务，不要用 `continue`。`agy-crew accounts quota --refresh` 会向 Google 的 Cloud Code 服务查询当前配额，这是唯一会联网的命令。
 
-已经有账号了？`agy-crew accounts import work2 --home <dir>` 会从现有的 HOME 形态目录复制令牌，例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。agy-crew 并不依赖 agy-cli-manager，导入只是复制文件，再做与登录相同的邮箱和重复检查。其他子命令：`enable`、`disable`、`cooldown clear|record`、`hold acquire|release`、`remove --yes`。想手动使用某个池账号时，`agy-crew start work1` 会在当前目录以该账号身份打开交互式 agy，退出前后台任务不会使用它（`--` 之后的参数传给 agy）。完整说明见[参考手册](docs/REFERENCE.zh-CN.md#账号池)。
+已经有账号了？`agy-crew accounts import work2 --home <dir>` 会从现有的 HOME 形态目录复制令牌，例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。agy-crew 并不依赖 agy-cli-manager，导入只是复制文件，再做与登录相同的邮箱和重复检查。其他子命令：`enable`、`disable`、`parallel <name> [<n>]`、`cooldown clear|record`、`hold acquire|release`、`remove --yes`。想手动使用某个池账号时，`agy-crew start work1` 会在当前目录以该账号身份打开交互式 agy，退出前后台任务不会使用它（`--` 之后的参数传给 agy）。完整说明见[参考手册](docs/REFERENCE.zh-CN.md#账号池)。
 
-现在，并行任务的数量大致以就绪账号数为宜。账号池为空时，所有任务都跑在你的 live 登录上。
+由 agent（skill）发起的运行（`staffer`、`research`、`review`、`implement`、`ask`、`continue`、`restart`）默认每个账号占一个槽位。`agy-crew accounts parallel <name> <n>` 可以单独提高某个账号的上限（1–64）；`auto` 仍优先选择有空位的账号，所有账号都满时任务以 `busy` 失败。上限会通过 `accounts list` 的 `PARALLEL` 列和 `accounts list --json` 的 `parallel` 字段一并交给调用方，调用方据此决定批量大小。凭据一旦进入借用（loan），就是独占的：借出方和借用方在此期间都不会再接新任务，`parallel` 不生效。交互式 `start` 和 `agy-crew omp` 也始终独占账号。账号池为空时，所有任务都跑在你的 live 登录上。
 
 ### omp：用池账号运行 omp（实验）
 
-装法有两种，任选其一：
-
-```bash
-agy-crew install --hosts omp   # 同时装技能和 omp 插件 loader
-# 或（npm 包方式）
-omp plugin install agy-crew
-```
+不需要预装插件。`agy-crew omp` 会把自带的 omp 扩展写入 `~/.omp/agent/extensions/agy-crew-omp.ts`，以池账号凭据启动 omp，并在 omp 退出时删除该扩展。`agy-crew install` 不再写入它，并会清除旧版本安装留下的 loader。如果你自己在该路径写了文件，它不会被覆盖；使用此桥接前请先移走。
 
 然后用 `agy-crew omp` 启动。它复用 `chooseAccount` 选号，持有该账号直到 omp 退出，并把账号名写进环境变量供插件读取：
 
 ```bash
-agy-crew omp work1 -- --model google-antigravity/gemini-3.8-flash
-agy-crew omp       -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --use-at-my-own-risk work1 -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --use-at-my-own-risk       -- --model google-antigravity/gemini-3.8-flash
 ```
 
-`--` 之后是 omp 自己的参数，原样传递。omp 默认把 `google-antigravity` 标记为 paused（“Google may restrict accounts that use Antigravity outside its own apps”）；插件只在 `agy-crew omp` 环境下注册一个同名 OAuth provider 取回该 id，并把选中账号作为 **runtime bearer** 注入（不写 `agent.db`、不建 profile、不 restrict session），由后台 agy warm-up 在过期前刷新。`before_agent_start` 删除 omp block 0 的 `§ Role / You are omp's trusted coding assistant.` 和 `cfg://`/`omp://` 入口，换成 Antigravity 的 `identity.tmpl`，其余工具描述、skills、rules、footer 保留；`before_provider_request` 还会清掉工具声明里的 `omp://` 示例。
+`--use-at-my-own-risk` 是必填参数。把已安装的扩展加载进 omp 并不是 omp 支持的接口，可能破坏会话；不带该参数时，命令会在占用账号或写入任何文件之前拒绝执行。`--` 之后是 omp 自己的参数，原样传递。omp 默认把 `google-antigravity` 标记为 paused（“Google may restrict accounts that use Antigravity outside its own apps”）；插件只在 `agy-crew omp` 环境下注册一个同名 OAuth provider 取回该 id，并把选中账号作为 **runtime bearer** 注入（不写 `agent.db`、不建 profile、不 restrict session），由后台 agy warm-up 在过期前刷新。`before_agent_start` 删除 omp block 0 的 `§ Role / You are omp's trusted coding assistant.` 和 `cfg://`/`omp://` 入口，换成 Antigravity 的 `identity.tmpl`，其余工具描述、skills、rules、footer 保留；`before_provider_request` 还会清掉工具声明里的 `omp://` 示例。
 
-没有安装插件时（既没有 `agy-crew install --hosts omp` 写入的 loader，也没有 `omp plugin install agy-crew` 装的包，或者 loader 指向的包已被删除），`agy-crew omp` 会拒绝启动：否则 omp 能正常打开，却根本用不到池账号。如果你用别的方式加载插件（例如 omp 的 `--profile`），可以设置 `AGY_CREW_OMP_SKIP_INSTALL_CHECK=1` 跳过检查。
+每个 omp 会话在退出前一直独占该账号。`accounts parallel` 只作用于由 agent（skill）发起的运行，不作用于交互式会话。
 
 连到 Cloud Code 端点的连接中断（`EPROTO: The TLS handshake failed`、`ECONNRESET`、`EPIPE`）不在 omp 认定的瞬时错误措辞里，第一次失败就会结束当前回合。插件只针对 Cloud Code 域名改写这类错误的措辞，让 omp 自己的重试额度（`retry.maxRetries`，默认 10 次）对它们生效，和 `503 No capacity available` 的处理一致。设置 `AGY_CREW_OMP_TRANSPORT_SHIM=0` 可以关闭。
 

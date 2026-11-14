@@ -6,7 +6,7 @@ import path from 'node:path';
 import { classifyFailureText, isAuthFailed, isQuotaExhausted, isUpstreamUnavailable, modelFamily, parseResetsIn, quotaPool } from '../companion/pool/results.mjs';
 import { recordCooldown } from '../companion/pool/lease.mjs';
 import { accountEnv } from '../companion/pool/env.mjs';
-import { chooseAccount, chooseLender } from '../companion/pool/select.mjs';
+import { chooseAccount, chooseLender, parallelOf } from '../companion/pool/select.mjs';
 import { parseQuotaSummary } from '../companion/pool/quota.mjs';
 import { loadPool, tokenPath, updatePool, validateAccountName } from '../companion/pool/state.mjs';
 import { readToken } from '../companion/pool/token.mjs';
@@ -117,6 +117,52 @@ test('auto selection: empty pool is live, then least loaded, most quota, least r
   pool.leases = [];
   assert.equal(choose(pool).account, 'a'); // known remaining beats unknown, higher wins
   assert.equal(choose(pool).auto, true);
+});
+
+test('a per-account parallel limit gates auto and explicit selection', () => {
+  assert.equal(parallelOf({}), 1, 'unset means one slot');
+  assert.equal(parallelOf({ parallel: 0 }), 1);
+  assert.equal(parallelOf({ parallel: 2 }), 2);
+
+  const pool = poolOf('a', 'b');
+  pool.accounts[0].parallel = 2;
+  pool.leases.push({ id: 'a1', account: 'a', pid: 1, role: 'run' });
+  assert.equal(choose(pool).account, 'b', 'auto still prefers a completely idle account');
+  pool.leases.push({ id: 'b1', account: 'b', pid: 1, role: 'run' });
+  assert.equal(choose(pool).account, 'a', 'a second slot on a is still free');
+  pool.leases.push({ id: 'a2', account: 'a', pid: 1, role: 'run' });
+  const explicit = choose(pool, { requested: 'a' });
+  assert.equal(explicit.error.reason, 'busy');
+  assert.match(explicit.error.message, /concurrency limit \(2\/2 slot\(s\) in use\)/);
+  assert.match(explicit.error.message, /accounts parallel a <n>/);
+
+  const none = choose(pool);
+  assert.equal(none.error.reason, 'busy');
+  assert.match(none.error.message, /every usable pool account is busy/);
+  assert.match(none.error.message, /a: 2\/2/);
+  assert.match(none.error.message, /b: 1\/1/);
+});
+
+test('a credential on loan is exclusive regardless of its parallel limit', () => {
+  const pool = poolOf('a', 'b', 'c');
+  pool.accounts[0].parallel = 3;
+  pool.accounts[1].parallel = 2;
+  pool.loans.push({ id: 'L', borrower: 'b', lender: 'a', pid: 1 });
+  pool.leases.push({ id: 'x1', account: 'a', pid: 1, role: 'lender', loan_id: 'L' },
+    { id: 'x2', account: 'b', pid: 1, role: 'run', loan_id: 'L' });
+
+  assert.equal(choose(pool).account, 'c', 'both sides of a loan are skipped');
+  assert.match(choose(pool, { requested: 'a' }).error.message, /part of a credential loan/);
+  assert.match(choose(pool, { requested: 'b' }).error.message, /part of a credential loan/);
+
+  pool.leases = [];
+  assert.match(choose(pool, { requested: 'a' }).error.message, /credential loan/,
+    'the loan record alone keeps every slot closed');
+  const bound = choose(pool, { conversation: 'c1', conversationAccount: 'b' });
+  assert.equal(bound.error.reason, 'busy');
+  assert.match(bound.error.message, /credential loan/);
+  assert.equal(chooseLender(pool, { family: FAMILY, exclude: ['b', 'c'], now: NOW, hasToken }), null,
+    'a loaned account never lends again');
 });
 
 test('auto selection rotates among accounts whose known quota is about equal', () => {

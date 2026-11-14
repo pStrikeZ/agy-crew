@@ -194,7 +194,7 @@ Without the command on PATH (route A′ or B), use `node <clone-or-plugin-root>/
 agy-crew accounts list            # each account should show "ready"
 ```
 
-Runs then choose an account automatically (`--account auto`). New accounts copy their permission settings from the live settings file on login, and a later `setup --apply` updates every pool account. Details: [REFERENCE.md → Accounts](REFERENCE.md#accounts).
+Runs then choose an account automatically (`--account auto`). New accounts copy their permission settings from the live settings file on login, and a later `setup --apply` updates every pool account. Each account takes one agent-dispatched run at a time; `agy-crew accounts parallel <name> <n>` raises that limit for one account when the user asks for more concurrency there, and its `PARALLEL` column in `accounts list` is what a caller should size a batch to. A credential on loan is exclusive, whatever the limit. Details: [REFERENCE.md → Accounts](REFERENCE.md#accounts).
 
 ## 6. The execution model
 

@@ -15,7 +15,7 @@ import { accountEnv } from './pool/env.mjs';
 import { accountDir, accountHome, accountSettingsPath, beginSharedFiles, loadPool, poolExists, poolPaths, settleShared,
   sharedHome, tokenPath, updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
-import { activeCooldown, chooseLender, exhaustedSnapshot, findAccount, holdOn } from './pool/select.mjs';
+import { activeCooldown, chooseLender, DEFAULT_PARALLEL, exhaustedSnapshot, findAccount, holdOn, parallelOf } from './pool/select.mjs';
 import { modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { refreshQuotas } from './pool/quota.mjs';
@@ -60,14 +60,15 @@ function cmdList(opts) {
   const now = Date.now();
   const rows = pool.accounts.map((a) => ({
     name: a.name, email: a.email, state: accountState(pool, a, now), last_used_at: a.last_used_at || null,
+    parallel: parallelOf(a),
     quota: pool.quota[a.name] || null,
     cooldowns: Object.entries(pool.cooldowns).filter(([k]) => k.startsWith(`${a.name}|`)).map(([k, c]) => ({ family: k.split('|')[1], ...c })),
   }));
   if (opts.json) return printJson({ accounts: rows, live: { description: 'your own agy login; never pooled' } });
   if (!rows.length) out('No pool accounts. Add one with `accounts login <name>`.');
-  const table = rows.map((r) => [r.name, r.email || 'unknown', stateLabel(r.state), formatAgo(r.last_used_at, now)]);
+  const table = rows.map((r) => [r.name, r.email || 'unknown', stateLabel(r.state), formatAgo(r.last_used_at, now), String(r.parallel)]);
   table.push({ lead: ['live'], text: 'your own agy login, never pooled' });
-  const lines = renderTable(['ACCOUNT', 'EMAIL', 'STATE', 'LAST USED'], table);
+  const lines = renderTable(['ACCOUNT', 'EMAIL', 'STATE', 'LAST USED', 'PARALLEL'], table);
   if (rows.length) lines.push('', ...renderQuotaTable(rows.map((r) => ({ name: r.name, snapshot: r.quota })), now));
   const cooling = rows.flatMap((r) => r.cooldowns.filter((c) => Date.parse(c.retry_at) > now).map((c) => ({ name: r.name, ...c })));
   if (cooling.length) lines.push('', ...renderCooldowns(cooling, now));
@@ -98,7 +99,8 @@ function assertUniqueEmail(pool, email, self = null) {
 }
 
 function newAccountRecord(name, email) {
-  return { name, email, added_at: new Date().toISOString(), last_used_at: null, disabled: false, auth_error_at: null, auth_error: null };
+  return { name, email, added_at: new Date().toISOString(), last_used_at: null, disabled: false, auth_error_at: null, auth_error: null,
+    parallel: DEFAULT_PARALLEL };
 }
 
 function interactiveLogin(home, logDir, { agyCommand }) {
@@ -303,6 +305,27 @@ function cmdToggle(opts, disabled) {
   const name = opts._[1];
   updatePool((pool) => { requireAccount(pool, name).disabled = disabled; });
   out(`Account ${name} ${disabled ? 'disabled' : 'enabled'}.`);
+}
+
+const PARALLEL_USAGE = 'usage: accounts parallel <name> [<n>]';
+const MAX_PARALLEL = 64;
+
+/** `<name>` alone prints the account's limit; with `<n>` it sets how many
+ *  agy-crew runs may hold the account at once (default 1). */
+function cmdParallel(opts) {
+  const name = opts._[1];
+  if (!name) throw new PoolError(PARALLEL_USAGE);
+  if (opts._[2] === undefined) {
+    const account = requireAccount(currentPool(), name);
+    return out(`Account ${name}: at most ${parallelOf(account)} concurrent agy-crew run(s).`);
+  }
+  const raw = opts._[2];
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) {
+    throw new PoolError(`parallel must be an integer from 1 to ${MAX_PARALLEL} (got "${raw}")`);
+  }
+  updatePool((pool) => { requireAccount(pool, name).parallel = n; });
+  out(`Account ${name}: at most ${n} concurrent agy-crew run(s).`);
 }
 
 const COOLDOWN_USAGE = 'usage: accounts cooldown clear <name> [--family <family>] | accounts cooldown record <name> --family <family> --retry-at <time>';
@@ -668,13 +691,15 @@ export async function cmdAccounts(opts, deps) {
     case 'refresh-email': return cmdRefreshEmail(opts);
     case 'enable': return cmdToggle(opts, false);
     case 'disable': return cmdToggle(opts, true);
+    case 'parallel': return cmdParallel(opts);
     case 'cooldown': return cmdCooldown(opts);
     case 'hold': return cmdHold(opts);
     case 'quota': return cmdQuota(opts, deps);
     default:
-      throw new PoolError('usage: accounts <list|login|import|remove|rename|refresh-email|enable|disable|cooldown|hold|quota> ...\n' +
+      throw new PoolError('usage: accounts <list|login|import|remove|rename|refresh-email|enable|disable|parallel|cooldown|hold|quota> ...\n' +
         '  accounts list [--json]\n  accounts login <name>\n  accounts import <name> --home <dir>\n' +
         '  accounts remove <name> [--yes]\n  accounts rename <old> <new>\n  accounts refresh-email [<name>...] [--json]\n  accounts enable|disable <name>\n' +
+        '  accounts parallel <name> [<n>]\n' +
         '  accounts cooldown clear <name> [--family <f>]\n  accounts cooldown record <name> --family <f> --retry-at <time>\n' +
         '  accounts hold acquire <name> --pid <pid> [--family <f>] [--json]\n  accounts hold release <id> [--json]\n' +
         '  accounts quota [<name>...] [--refresh] [--json]');

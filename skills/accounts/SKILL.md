@@ -1,6 +1,6 @@
 ---
 name: accounts
-description: Manage the agy account pool - list accounts, read quota and cooldown state, import, enable, disable, remove, and guide interactive sign-in. Use when the user asks "which agy accounts are available", "add an agy account", "agy quota", "why is the agy account cooling down", or "remove/disable an agy account". This is an operations skill for the pool; the persona skills select accounts automatically.
+description: Manage the agy account pool - list accounts, read quota and cooldown state, set per-account concurrency, import, enable, disable, remove, and guide interactive sign-in. Use when the user asks "which agy accounts are available", "add an agy account", "agy quota", "why is the agy account cooling down", or "remove/disable an agy account". This is an operations skill for the pool; the persona skills select accounts automatically.
 allowed-tools: Bash(node:*), AskUserQuestion
 ---
 
@@ -30,6 +30,7 @@ node "<skill-dir>/../../companion/agy-companion.mjs" accounts <subcommand> [args
 | `accounts quota [<name>...] [--refresh] [--json]` | The same `QUOTA` table and `COOLDOWNS` section, from cached snapshots. `--refresh` queries Google's Cloud Code service and updates the snapshots; it is the only subcommand that uses the network. |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json`) from an existing HOME-shaped directory, for example an agy-cli-manager account. |
 | `accounts enable <name>` / `accounts disable <name>` | Put an account into or out of automatic selection. |
+| `accounts parallel <name> [<n>]` | How many agent-dispatched runs may hold one account at once. Without `<n>` it prints the current limit; with it, sets 1–64. Unset or removed means 1. `start` and `agy-crew omp` still hold an account exclusively, and a credential on loan ignores the limit. |
 | `accounts cooldown clear <name> [--family <f>]` | Drop a recorded quota cooldown. Use it only when the user says the quota is back. |
 | `accounts remove <name> [--yes]` | Delete an account. Without `--yes` it only prints what would be deleted. |
 | `accounts login <name>` | Interactive sign-in. **Do not run this yourself**, see below. |
@@ -54,7 +55,7 @@ If the user already has accounts elsewhere, offer `accounts import` instead of a
 | State in `list` | Meaning | Action |
 | --- | --- | --- |
 | `ready` | Idle and usable | None. |
-| `busy n` | `n` runs hold it | Normal. A new `auto` run prefers an idle account. |
+| `busy n` | `n` runs hold it; the `PARALLEL` column gives its concurrent-run limit | Normal. A new `auto` run prefers an account with a free slot. |
 | `held` | Another process outside agy-crew is using its credential | Runs skip it; a conversation bound to it borrows another account's credential. Leave it alone; the hold ends when that process releases it or exits. |
 | `cooling` | A model family hit its quota; other families still work. The `COOLDOWNS` section lists each family with `until <time> (in <duration>)` | Wait until then, use another model family or account. Do not clear the cooldown on your own. |
 | `needs login` | agy rejected the credential | Tell the user to run `agy-crew accounts login <name>`. Never retry. |
@@ -66,9 +67,11 @@ Cooldowns are per account and per model family (for example `gemini-3.8-flash`, 
 
 Run commands accept `--account auto|live|<name>` (default `auto`, or the `AGY_CREW_ACCOUNT` environment variable):
 
-- `auto` picks an idle ready account, then the one with the most known quota left. With no enabled pool account it uses live.
-- `<name>` forces that account; it fails when the account is unknown, disabled, cooling or needs login.
+- `auto` picks an account with a free slot, then the one with the most known quota left. With no enabled pool account it uses live.
+- `<name>` forces that account; it fails when the account is unknown, disabled, cooling, needs login, or has no free slot.
 - `live` forces the user's own login.
+
+Each account accepts one agent-dispatched run by default; `accounts parallel <name> <n>` raises that for one account. The `PARALLEL` column in `accounts list` (and `parallel` in `--json`) is the maximum the caller may use, so size a batch to the free slots. A credential on loan is exclusive: while an account lends or borrows a token, neither side takes another run and the limit does not apply. When every usable account is full, the run fails with `busy` and the remedy. Raise a limit only when the user asks for more concurrency on that account.
 
 A conversation stays bound to the account that created it; continuing it with a different explicit `--account` is refused. Quota handling during runs is described in `../jobs/SKILL.md`.
 

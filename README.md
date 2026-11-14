@@ -87,7 +87,7 @@ The skills work exactly the same: the bundle stores the absolute path of the com
 | DeepSeek Harness (`dsh`) | `~/.dsh/skills` |
 | agy's shared home (`shared`) | `~/.agy-crew/shared/home/.agents/skills` (always included by a default install) |
 
-The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths, and each harness gets a directory link (`agy-crew-<persona>`; a junction on Windows, no elevation needed) pointing into that bundle. Anything in a skills directory that the installer did not create is user content and is never overwritten; any conflict aborts the whole run before writing and prints the paths plus a remedy. Pi is not covered by `install`; use the Pi package route below.
+The skills are rendered once into `~/.agy-crew/bundles/<version>-<digest>/` with absolute companion paths, and each harness gets a directory link (`agy-crew-<persona>`; a junction on Windows, no elevation needed) pointing into that bundle. Anything in a skills directory that the installer did not create is user content and is never overwritten; any conflict aborts the whole run before writing and prints the paths plus a remedy. Pi is not covered by `install`; use the Pi package route below. `install` no longer writes the omp plugin loader: it installs the extension only for the lifetime of an `agy-crew omp` run, and removes a loader left by an earlier install.
 
 Restart the harness or open a new session afterwards, then follow [First run](#first-run).
 
@@ -251,30 +251,24 @@ From then on, runs pick an account automatically (`--account auto` is the defaul
 
 When an account hits a quota limit, the companion records a cooldown for that account and model family (until the reset time agy reports, or 60 minutes if none). A run that had not started a conversation fails over to another account. A run in the middle of a conversation stays bound to its account, because the history lives there; if that account is cooling, an idle account lends its credential for the rest of the run and the token files are restored afterwards, including after a crash. If nothing can continue, the job ends with `quota_exhausted` and a `retry_at`, and you decide when to `continue`. An upstream 503 (`No capacity available for model ...`) parks the account for 3 minutes so the next run uses another one, and a task that had changed nothing is rerun from its original prompt as a new conversation rather than continued; if it still ends with `upstream_unavailable` before agy did anything, start the task again instead of using `continue`. `agy-crew accounts quota --refresh` asks Google's Cloud Code service for current quota; that is the only command that uses the network.
 
-Already have accounts? `agy-crew accounts import work2 --home <dir>` copies the token from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). agy-cli-manager is not needed otherwise; import is just a file copy plus the usual email and duplicate checks. Other subcommands: `enable`, `disable`, `cooldown clear|record`, `hold acquire|release`, `remove --yes`. To use a pool account by hand, `agy-crew start work1` opens interactive agy as that account in the current directory and keeps background runs off it until you exit (arguments after `--` go to agy). Full details in the [reference](docs/REFERENCE.md#accounts).
+Already have accounts? `agy-crew accounts import work2 --home <dir>` copies the token from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). agy-cli-manager is not needed otherwise; import is just a file copy plus the usual email and duplicate checks. Other subcommands: `enable`, `disable`, `parallel <name> [<n>]`, `cooldown clear|record`, `hold acquire|release`, `remove --yes`. To use a pool account by hand, `agy-crew start work1` opens interactive agy as that account in the current directory and keeps background runs off it until you exit (arguments after `--` go to agy). Full details in the [reference](docs/REFERENCE.md#accounts).
 
-Parallel jobs now make sense up to roughly the number of ready accounts. With an empty pool everything runs on your live login.
+Agent-dispatched runs (`staffer`, `research`, `review`, `implement`, `ask`, `continue`, `restart`) take one slot per account by default. `agy-crew accounts parallel <name> <n>` raises that limit for one account (1–64); `auto` still prefers an account with a free slot, and a run fails with `busy` when none has one. The limit is reported per account in `accounts list` (the `PARALLEL` column) and `accounts list --json` (`parallel`), so the caller can size a batch to the free slots. A credential on loan is always exclusive: while an account lends or borrows a token, neither side takes another run and `parallel` does not apply. Interactive `start` and `agy-crew omp` also hold an account exclusively. With an empty pool everything runs on your live login.
 
 ### omp: run omp on a pool account (experimental)
 
-Install it either way:
-
-```bash
-agy-crew install --hosts omp   # skills plus the omp plugin loader
-# or, from the npm package:
-omp plugin install agy-crew
-```
+There is no install step. `agy-crew omp` writes the bundled omp extension to `~/.omp/agent/extensions/agy-crew-omp.ts`, runs omp with the pool credential, and removes the extension when omp exits. `agy-crew install` no longer writes it and removes a loader left by an older install. A file you wrote at that path is never overwritten, so move it away before using the bridge.
 
 Then launch omp through the account pool:
 
 ```bash
-agy-crew omp work1 -- --model google-antigravity/gemini-3.8-flash
-agy-crew omp       -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --use-at-my-own-risk work1 -- --model google-antigravity/gemini-3.8-flash
+agy-crew omp --use-at-my-own-risk       -- --model google-antigravity/gemini-3.8-flash
 ```
 
-`--` ends agy-crew's flags; everything after it goes to omp unchanged. The command selects an account, holds it until omp exits, and exports the account name for the plugin. omp ships `google-antigravity` paused ("Google may restrict accounts that use Antigravity outside its own apps"); under `agy-crew omp` only, the plugin registers a same-id OAuth provider to take the id back and installs the selected account as the session's **runtime bearer** (no `agent.db` write, no profile, no session restriction). A background agy warm-up refreshes the bearer before expiry. The prompt rewrite removes block 0's `§ Role / You are omp's trusted coding assistant.` and the `cfg://`/`omp://` entries, adds `identity.tmpl`, and `before_provider_request` strips `omp://` examples from tool declarations; tool schemas, skills, rules, and the footer stay as they are.
+`--use-at-my-own-risk` is required. Loading an installed extension into omp is not a supported omp interface, and it can break the session; without the flag the command refuses before holding an account or writing anything. `--` ends agy-crew's flags; everything after it goes to omp unchanged. The command selects an account, holds it until omp exits, and exports the account name for the plugin. omp ships `google-antigravity` paused ("Google may restrict accounts that use Antigravity outside its own apps"); under `agy-crew omp` only, the plugin registers a same-id OAuth provider to take the id back and installs the selected account as the session's **runtime bearer** (no `agent.db` write, no profile, no session restriction). A background agy warm-up refreshes the bearer before expiry. The prompt rewrite removes block 0's `§ Role / You are omp's trusted coding assistant.` and the `cfg://`/`omp://` entries, adds `identity.tmpl`, and `before_provider_request` strips `omp://` examples from tool declarations.
 
-`agy-crew omp` refuses to start when the extension is not installed (neither the loader from `agy-crew install --hosts omp` nor the `omp plugin install agy-crew` package is present, or the loader points at a removed package): without it omp would start normally but never see the pool account. Set `AGY_CREW_OMP_SKIP_INSTALL_CHECK=1` if you load the extension some other way (for example an omp `--profile`).
+Each omp session holds its account exclusively until omp exits. `accounts parallel` applies to agent-dispatched runs, not to interactive sessions.
 
 A dropped connection to the Cloud Code endpoint (`EPROTO: The TLS handshake failed`, `ECONNRESET`, `EPIPE`) is not wording omp treats as transient, so it would end the turn on the first failure. The extension rewords these errors, for the Cloud Code hosts only, so omp's own retry budget (`retry.maxRetries`, 10 by default) applies to them as it already does to `503 No capacity available`. `AGY_CREW_OMP_TRANSPORT_SHIM=0` turns this off.
 

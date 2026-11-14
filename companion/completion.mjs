@@ -27,6 +27,7 @@ const COMMANDS = {
   install: { flags: ['--hosts', '--all', '--dry-run', '--status', '--json', '--no-completion'] },
   uninstall: { flags: ['--hosts', '--all', '--dry-run', '--json'] },
   start: { args: ['account'], flags: ['--model', '--help'], dashdash: true },
+  omp: { args: ['account'], flags: ['--use-at-my-own-risk', '--family', '--help'], dashdash: true },
   completion: { args: ['shell'], flags: [] },
   version: { flags: [] }, help: { flags: [] },
 };
@@ -40,6 +41,7 @@ const ACCOUNTS = {
   'refresh-email': { args: ['account*'], flags: ['--json'] },
   enable: { args: ['account'], flags: [] },
   disable: { args: ['account'], flags: [] },
+  parallel: { args: ['account', 'n'], flags: [] },
   quota: { args: ['account*'], flags: ['--refresh', '--json'] },
   cooldown: { sub: { clear: { args: ['account'], flags: ['--family'] }, record: { args: ['account'], flags: ['--family', '--retry-at'] } } },
   hold: { sub: { acquire: { args: ['account'], flags: ['--pid', '--family', '--json'] }, release: { args: [], flags: ['--json'] } } },

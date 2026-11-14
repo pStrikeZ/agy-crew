@@ -210,15 +210,17 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 
 | Command | Effect |
 |---|---|
-| `accounts list [--json]` | Aligned plain-text tables. First, name, email, state (`ready`, `busy n`, `held`, `cooling`, `needs login`, `disabled`) and last use as a relative time (`9m ago`, `never`), plus a `live` row (`your own agy login, never pooled`). Then a `QUOTA` table with, per account and quota pool (`gemini`, `other`, then any others), the remaining percent and reset time of the 5h and weekly windows (`99%  resets in 4h12m (15:23)`; `MM-DD HH:MM` when the reset is not today, `reset since refresh` when the cached reset time has passed) and the age of the snapshot (`AS OF`); accounts without a snapshot show `not refreshed`, failed refreshes `error: ...`. Finally a `COOLDOWNS` section listing each active cooldown's family and `until <time> (in <duration>)`, omitted when there are none. `--json` output is unchanged |
+| `accounts list [--json]` | Aligned plain-text tables. First, name, email, state (`ready`, `busy n`, `held`, `cooling`, `needs login`, `disabled`) and last use as a relative time (`9m ago`, `never`), plus a `PARALLEL` column with the account's concurrent agent-run limit, plus a `live` row (`your own agy login, never pooled`). Then a `QUOTA` table with, per account and quota pool (`gemini`, `other`, then any others), the remaining percent and reset time of the 5h and weekly windows (`99%  resets in 4h12m (15:23)`; `MM-DD HH:MM` when the reset is not today, `reset since refresh` when the cached reset time has passed) and the age of the snapshot (`AS OF`); accounts without a snapshot show `not refreshed`, failed refreshes `error: ...`. Finally a `COOLDOWNS` section listing each active cooldown's family and `until <time> (in <duration>)`, omitted when there are none. `--json` adds each account's `parallel` limit |
 | `accounts login <name>` | Interactive sign-in for a new account, or a re-login of an existing one. See [Login](#login) |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). Same email and duplicate checks as login. Refuses the live home |
 | `accounts quota [<name>...] [--refresh] [--json]` | Print the `QUOTA` table and `COOLDOWNS` section described above for the named accounts (all by default), from cached snapshots. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
 | `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
+| `accounts parallel <name> [<n>]` | How many agent-dispatched runs may hold one account at once. Without `<n>`, print the current limit. With `<n>`, set it (1–64); unset means 1. It does not require an idle account and does not touch its token. Interactive `start`/`omp` still hold the account exclusively, and a credential on loan ignores the limit |
 | `accounts cooldown clear <name> [--family <f>]` | Drop the recorded cooldown for an account, for one model family or for all |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | Record a quota cooldown observed outside agy-crew, until the given ISO 8601 time. A time already past, or earlier than a cooldown in force, changes nothing. `--json` prints `{ "cooldown": ... }` with the cooldown now in force |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | Keep agy-crew off an account while another process uses its credential. See [External holds](#external-holds) |
 | `start [<name>] [--model <id>] [-- <agy args>...]` | Run agy interactively in this terminal, in the current directory, in the shared home with the credential of `<name>` or, without one, of an idle account with quota. See [Interactive sessions](#interactive-sessions) |
+| `omp --use-at-my-own-risk [<name>] [--family <f>] [-- <omp args>...]` | Run omp on one held pool account. The flag is required: the bundled omp extension is written to `~/.omp/agent/extensions/agy-crew-omp.ts` for this run and removed when omp exits. `install` neither writes it nor overwrites a file the user placed there |
 | `accounts rename <old> <new>` | Rename an idle account: its directory, cooldowns, quota snapshot and conversation bindings move with it. Refused while the account is in a lease or loan, lends the shared session, or the new name is taken or invalid |
 | `accounts refresh-email [<name>...] [--json]` | Re-read each account's email from its token file (offline; run `accounts quota --refresh` first to have agy renew the token) and update the pool record. Reports `updated`, `unchanged`, a missing token, a token without an email, or an email another account already carries (the record is then left alone) |
 | `accounts remove <name> [--yes]` | Without `--yes`, print what would be deleted and exit 0. With `--yes`, delete the account directory, its cooldowns, quota snapshot and conversation bindings, and report how many conversations became unusable. Refused while the account is in a lease or loan |
@@ -244,14 +246,14 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 | `<name>` | That account. Fails if it is unknown, disabled or needs login. If it is cooling for the model family, fails with its `retry_at` and a suggestion to use `--account auto` or another model family |
 | `auto` | With no enabled pool account, live. Otherwise the best candidate below |
 
-**Selection ranking for `auto`.** A candidate is an enabled account with a token file, no authentication error, no active cooldown for the model family, and no cached Cloud Code snapshot reporting zero remaining quota for the family's quota pool with a reset time in the future. Candidates are ranked by:
+**Selection ranking for `auto`.** A candidate is an enabled account that is not part of a credential loan, with a token file, no authentication error, no active cooldown for the model family, no cached Cloud Code snapshot reporting zero remaining quota for the family's quota pool with a reset time in the future, and fewer active leases than its parallel limit (`accounts parallel`, default 1). Candidates are ranked by:
 
 1. fewest active leases (an idle account beats a busy one);
 2. highest known remaining quota fraction (the lower of the short and weekly windows, compared in 5% steps so that accounts that are about equally full rotate by least recent use; unknown ranks after any known value above zero);
 3. oldest `last_used_at`;
 4. insertion order.
 
-If there is no candidate, the run fails with reason `quota_exhausted` (or `upstream_unavailable` when every account is cooling only because of 503s), listing each account's earliest `retry_at` and suggesting `--account live` or another model. Concurrent runs share one account only when it is named explicitly, or when `auto` finds no idle candidate (the least-loaded account wins).
+If there is no candidate, the run fails with reason `quota_exhausted` (or `upstream_unavailable` when every account is cooling only because of 503s), listing each account's earliest `retry_at` and suggesting `--account live` or another model. When every usable account is instead busy, it fails with reason `busy` and lists the slots in use. Concurrent agent-dispatched runs share one account only after `accounts parallel <name> <n>` raises that account's limit above 1; an explicit `--account <name>` at its limit is refused the same way. A credential on loan is always exclusive: both lender and borrower are skipped and the limit admits nothing until the loan ends. Interactive `start`, `agy-crew omp`, external holds and credential loans require a completely idle account.
 
 Selection and the lease that marks the account busy are taken in one locked update, and released when the agy process ends. A lease whose process died is dropped automatically.
 
@@ -282,10 +284,11 @@ An **authentication failure** on a pool account (`401`, `403` or `unauthenticate
 A conversation's history lives in its account's HOME, but the credential that makes the request can come from another account. When a conversation is bound to pool account B and B is cooling for the model family, either at continuation start or after a quota failure mid-run, the companion borrows an idle account L's credential:
 
 1. L is chosen like an `auto` candidate but must also hold no lease and not be in a loan. Live never lends.
-2. In one locked update the loan is recorded, with a lender lease on L and a run lease on B.
-3. In B's token directory, B's token is renamed to `.antigravity-oauth-token.agy-crew.loan-backup` (only when it exists; a pre-existing backup aborts the loan), and L's token is copied to B's token path.
-4. agy runs with B's HOME, so it sees B's conversation while L's credential makes the request. A quota cooldown during a loan is recorded against L.
-5. Afterwards, in a `finally`, B's current token (agy may have refreshed it) is copied back to L's token path, B's token is deleted, and the backup is renamed back. Then the loan and its leases are dropped.
+2. The loan starts only while B holds no other run lease. B's HOME then carries L's token, so the lent credential supports exactly one run: neither B nor L takes another run, whatever their `accounts parallel` limits, until the loan is restored.
+3. In one locked update the loan is recorded, with a lender lease on L and a run lease on B.
+4. In B's token directory, B's token is renamed to `.antigravity-oauth-token.agy-crew.loan-backup` (only when it exists; a pre-existing backup aborts the loan), and L's token is copied to B's token path.
+5. agy runs with B's HOME, so it sees B's conversation while L's credential makes the request. A quota cooldown during a loan is recorded against L.
+6. Afterwards, in a `finally`, B's current token (agy may have refreshed it) is copied back to L's token path, B's token is deleted, and the backup is renamed back. Then the loan and its leases are dropped.
 
 **Crash recovery.** Every locked update first reaps dead processes: leases whose pid is gone are dropped, and a loan whose pid is gone is restored by the same steps (so the lender's token gets the refreshed content and the borrower's original token returns). `accounts remove` and `accounts login` refuse while the account is in a lease or loan.
 
@@ -346,7 +349,7 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
   update-check.json              daily npm update-check cache (latest, checked_at, notified_version)
 ```
 
-`pool.json` holds `accounts` (insertion order is the final tie-break), `cooldowns` (keyed `<name>|<family>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
+`pool.json` holds `accounts` (insertion order is the final tie-break; each account's optional `parallel` limits concurrent runs, default 1), `cooldowns` (keyed `<name>|<family>`), `leases`, `conversations` (conversation id to account), `loans` and `quota` snapshots. Writes are atomic and locked. A missing file is an empty pool; a corrupt file is an error and is never reset; a file with a newer `schema` is refused (`pool.json was written by a newer agy-crew`).
 
 ### Settings and `setup --apply`
 
@@ -357,6 +360,7 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
 | Situation | Reason / output | Exit |
 |---|---|---|
 | No `auto` candidate, or quota hit mid-run with no lender | `quota_exhausted`, with `retry_at` (per account when no candidate) | 5 when a conversation id exists, otherwise 1; a background job ends `attention` or `error` accordingly |
+| Every usable account busy (parallel limit or credential loan), or a named one at its limit | `busy`, naming the slots in use or the loan, and `accounts parallel` | 1 |
 | 503 / no capacity from the model, no account or lender could continue | `upstream_unavailable`, with `retry_at` (3 minutes after the last 503) | 5 when a conversation id exists, otherwise 1; a background job ends `attention` or `error` accordingly |
 | Authentication failure on a pool account | account marked `needs login`; never retried | follows the normal error path |
 | Explicit `--account <name>` that is unknown, disabled, held, cooling or needs login | error before launch naming the reason | 1 |
@@ -476,7 +480,7 @@ From a checkout: `git clone https://github.com/pStrikeZ/agy-crew && cd agy-crew 
 | `agy-crew uninstall [--hosts …\|--all]` | Remove only the links the installer created |
 | `agy-crew completion <bash\|zsh\|fish\|powershell>` | Print a tab-completion script (`source <(agy-crew completion bash)`, or the zsh/fish equivalent; PowerShell: `agy-crew completion powershell \| Out-String \| Invoke-Expression`). It completes commands, flags, flag values (models, efforts, hosts), account names and job ids; the shell calls the hidden `agy-crew __complete <words…>` |
 
-On the `omp` host, `install` also writes `~/.omp/agent/extensions/agy-crew-omp.ts`, a managed loader that re-exports the bundled `omp/extension.mjs`. `agy-crew omp` needs that extension; `uninstall` removes the loader along with the links. A non-managed file at that path is a conflict and aborts the install before anything is written.
+`install` no longer writes the omp extension loader. `agy-crew omp --use-at-my-own-risk` writes `~/.omp/agent/extensions/agy-crew-omp.ts` for one run and removes it when omp exits. A non-managed file at that path is never overwritten: the command refuses to start until it is moved. `install` and `uninstall` remove a managed loader left by 0.9.14 or earlier.
 
 ### Hosts
 
@@ -527,7 +531,7 @@ To get upstream back later, run `agy-crew uninstall --all` first.
 
 ## Upgrading
 
-Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.9.14`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
+Claude Code and Codex cache the plugin under a per-**version** directory (e.g. `cache/agy-crew/agy-crew/0.9.15`) and key "is it current?" on that version string, not on the commit. Bump their manifests and `package.json` together when preparing a release. Pi's Git source instead follows the configured ref; local sources read the checkout directly.
 
 - **Terminal command (`agy-crew install`)** — for an npm install, run `npm install -g agy-crew@latest`, then `agy-crew install` to render a fresh bundle and re-link; restart the harness. For a checkout, `git pull` is live at once for the source, and `agy-crew install` refreshes the bundle. See [Install command](#install-command).
 - **Claude Code** — `claude plugin marketplace update agy-crew` refreshes the marketplace clone, then `claude plugin update agy-crew@agy-crew` re-copies it into the cache. `install` is **not** the upgrade command: on an already-installed plugin it answers "already installed" and does nothing, whatever the version. And `update` only moves if the version string changed — on an unchanged version it answers "already at the latest version" and leaves the old commit in place. Force the current commit in with `claude plugin uninstall agy-crew@agy-crew && claude plugin install agy-crew@agy-crew`. Restart Claude Code afterwards either way — skills are registered at session start.

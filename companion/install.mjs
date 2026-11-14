@@ -26,7 +26,7 @@ const STAGING_GRACE_MS = 5 * 60 * 1000;
 export const HOSTS = {
   claude: { skills: ['.claude', 'skills'], detect: ['.claude'] },
   codex: { skills: ['.agents', 'skills'], detect: ['.codex'] },
-  omp: { skills: ['.omp', 'agent', 'skills'], extension: ['.omp', 'agent', 'extensions'], detect: ['.omp'] },
+  omp: { skills: ['.omp', 'agent', 'skills'], detect: ['.omp'] },
   opencode: { skills: ['.config', 'opencode', 'skills'], detect: ['.config', 'opencode'] },
   dsh: { skills: ['.dsh', 'skills'], detect: ['.dsh'] },
   // The shared HOME that `start` and every pooled run use for agy itself: agy
@@ -38,9 +38,10 @@ export const HOSTS = {
 const home = (...parts) => path.join(os.homedir(), ...parts);
 const hostBase = key => (HOSTS[key].base ? HOSTS[key].base() : os.homedir());
 const hostDir = key => path.join(hostBase(key), ...HOSTS[key].skills);
-const hostExtensionDir = key => path.join(hostBase(key), ...HOSTS[key].extension);
 const EXTENSION_MARKER = `// managed by ${PRODUCT} install`;
-const extensionPath = key => path.join(hostExtensionDir(key), `${PRODUCT}-omp.ts`);
+/** The omp loader. It is written for one `agy-crew omp` run and removed when
+ *  that run ends, never left behind by `install`. */
+export const ompExtensionPath = () => path.join(home('.omp', 'agent', 'extensions'), `${PRODUCT}-omp.ts`);
 
 /** The omp loader that re-exports the bundled extension from this package. */
 export function extensionContent(root = packageRoot()) {
@@ -48,44 +49,53 @@ export function extensionContent(root = packageRoot()) {
   return `${EXTENSION_MARKER}\nexport { default } from ${JSON.stringify(target)};\n`;
 }
 
-/** Install state for a host's extension, or null when the host has none. */
-function extensionState(key, root = packageRoot()) {
-  if (!HOSTS[key]?.extension) return null;
-  const dest = extensionPath(key);
-  const content = extensionContent(root);
-  if (!lstat(dest)) return { dest, content, change: 'created' };
-  let existing;
-  try { existing = fs.readFileSync(dest, 'utf8'); } catch { return { dest, content, change: 'conflict' }; }
-  if (!existing.startsWith(EXTENSION_MARKER)) return { dest, content, change: 'conflict' };
-  return { dest, content, change: existing === content ? 'unchanged' : 'updated' };
-}
-
-/** True when an installed omp loader is ours. */
+/** True when an installed omp loader is one agy-crew wrote. */
 function hasManagedExtension() {
-  const dest = extensionPath('omp');
-  try { return fs.readFileSync(dest, 'utf8').startsWith(EXTENSION_MARKER); } catch { return false; }
+  try { return fs.readFileSync(ompExtensionPath(), 'utf8').startsWith(EXTENSION_MARKER); } catch { return false; }
 }
 
-/**
- * Why `${PRODUCT} omp` cannot work yet, or null when omp will load the bundled
- * extension: through the loader `install` writes, or through the package that
- * `omp plugin install ${PRODUCT}` puts under omp's plugin directory.
- */
-export function ompExtensionProblem() {
-  const dest = extensionPath('omp');
-  let loader = null;
-  try { loader = fs.readFileSync(dest, 'utf8'); } catch { /* not installed through the loader */ }
-  if (loader !== null) {
-    // A file the user wrote themselves is theirs to get right.
-    if (!loader.startsWith(EXTENSION_MARKER)) return null;
-    const url = /from\s+("(?:[^"\\]|\\.)*")/.exec(loader)?.[1];
-    let target = null;
-    try { target = fileURLToPath(JSON.parse(url)); } catch { /* unreadable loader */ }
-    if (target && fs.existsSync(target)) return null;
-    return `the omp extension loader ${dest} points at a missing file${target ? ` (${target})` : ''}`;
+/** Remove a loader an older `agy-crew install` left behind; null when none. */
+function removeManagedExtension() {
+  const dest = ompExtensionPath();
+  if (!hasManagedExtension()) return null;
+  fs.rmSync(dest, { force: true });
+  return dest;
+}
+
+/** Install the omp loader for the lifetime of one `agy-crew omp` run. A file
+ *  the user wrote is never overwritten: omp would then load both. */
+export function installOmpExtension(root = packageRoot()) {
+  const dest = ompExtensionPath();
+  let existing = null;
+  try { existing = fs.readFileSync(dest, 'utf8'); } catch (error) {
+    if (error.code !== 'ENOENT') fail(`cannot read the omp extension loader ${dest}: ${error.message}`);
   }
-  if (fs.existsSync(home('.omp', 'agent', 'plugins', 'node_modules', PRODUCT, 'omp', 'extension.mjs'))) return null;
-  return 'the omp extension is not installed';
+  if (existing !== null && !existing.startsWith(EXTENSION_MARKER)) {
+    fail(`${dest} exists and was not created by ${PRODUCT}; move it away and retry`);
+  }
+  const content = extensionContent(root);
+  writeFileAtomic(dest, content);
+  return { dest, content };
+}
+
+/** Remove the loader installed for that run. Leaves a file the user replaced
+ *  meanwhile, and reports whether the loader is gone. A concurrent run may
+ *  already have removed it. */
+export function uninstallOmpExtension(installed) {
+  if (!installed) return false;
+  let current;
+  try {
+    current = fs.readFileSync(installed.dest, 'utf8');
+  } catch (error) {
+    return error.code === 'ENOENT';
+  }
+  if (current !== installed.content) return false;
+  try {
+    fs.rmSync(installed.dest, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 const hostPresent = key => HOSTS[key].always || fs.existsSync(path.join(hostBase(key), ...HOSTS[key].detect));
 const fwd = p => p.replaceAll('\\', '/');
@@ -541,39 +551,31 @@ export function cmdInstall(opts) {
   });
 
   const conflicts = upstreamConflicts(selected, bundle.personas);
-  const plan = selected.map(key => {
-    const extension = extensionState(key);
-    if (extension?.change === 'conflict') {
-      conflicts.push({
-        path: extension.dest,
-        reason: 'exists and was not created by agy-crew',
-        remedy: `move or remove ${extension.dest}, then re-run install`,
-      });
-    }
-    return {
-      host: key,
-      dir: hostDir(key),
-      skills: bundle.personas.map(persona => {
-        const name = `${SKILL_PREFIX}${persona}`;
-        const dest = path.join(hostDir(key), name);
-        const change = classify(dest, path.join(bundle.bundleDir, name));
-        if (change === 'conflict') {
-          conflicts.push({ path: dest, reason: 'exists and was not created by agy-crew', remedy: `move or remove ${dest}, then re-run install` });
-        }
-        return { name, dest, change };
-      }),
-      extension,
-    };
-  });
+  const plan = selected.map(key => ({
+    host: key,
+    dir: hostDir(key),
+    skills: bundle.personas.map(persona => {
+      const name = `${SKILL_PREFIX}${persona}`;
+      const dest = path.join(hostDir(key), name);
+      const change = classify(dest, path.join(bundle.bundleDir, name));
+      if (change === 'conflict') {
+        conflicts.push({ path: dest, reason: 'exists and was not created by agy-crew', remedy: `move or remove ${dest}, then re-run install` });
+      }
+      return { name, dest, change };
+    }),
+  }));
   const publicPlan = plan.map(h => ({
     host: h.host,
     dir: h.dir,
     skills: h.skills.map(({ name, change }) => ({ name, change })),
-    ...(h.extension ? { extension: { path: h.extension.dest, change: h.extension.change } } : {}),
   }));
+  // 0.9.14 and earlier wrote an omp plugin loader from `install`. It is now
+  // installed only for the lifetime of `agy-crew omp`, so retire the old copy.
+  const legacyExtension = hasManagedExtension() ? ompExtensionPath() : null;
 
   if (opts.json) {
-    process.stdout.write(`${JSON.stringify({ version: bundle.version, bundle: bundle.bundleDir, hosts: publicPlan, conflicts }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ version: bundle.version, bundle: bundle.bundleDir, hosts: publicPlan,
+      ...(legacyExtension ? { omp_extension: { path: legacyExtension, change: 'removed' } } : {}), conflicts }, null, 2)}\n`);
     if (conflicts.length) throw Object.assign(new Error('conflicts'), { exitCode: 1, alreadyPrinted: true });
   } else if (conflicts.length) {
     const lines = [`${PRODUCT}: install aborted, nothing was written. ${conflicts.length} conflict(s):`];
@@ -591,8 +593,8 @@ export function cmdInstall(opts) {
     for (const h of plan) {
       lines.push(`${h.host}  ${h.dir}`);
       for (const s of h.skills) lines.push(`  ${s.name}  ${s.change}`);
-      if (h.extension) lines.push(`  ${path.basename(h.extension.dest)}  ${h.extension.change}`);
     }
+    if (legacyExtension) lines.push(`omp extension  removed  ${legacyExtension}`);
     for (const sh of shells) lines.push(`completion ${sh}  ${SHELL_TARGETS[sh].rc()}`);
     for (const t of pwshTargets) lines.push(`completion ${t.shell}  ${t.file}${t.skip ? `  skipped (${t.skip})` : ''}`);
     process.stdout.write(`${lines.join('\n')}\n`);
@@ -609,25 +611,21 @@ export function cmdInstall(opts) {
         makeLink(path.join(bundle.bundleDir, s.name), s.dest);
         done.push({ dest: s.dest, previous });
       }
-      if (h.extension && h.extension.change !== 'unchanged') {
-        const previousText = h.extension.change === 'updated' ? fs.readFileSync(h.extension.dest, 'utf8') : null;
-        writeFileAtomic(h.extension.dest, h.extension.content);
-        done.push({ dest: h.extension.dest, previousText });
-      }
     }
   } catch (error) {
-    for (const { dest, previous, previousText } of done.reverse()) {
+    for (const { dest, previous } of done.reverse()) {
       try {
-        if (previousText !== undefined) {
-          if (previousText === null) fs.rmSync(dest, { force: true });
-          else writeFileAtomic(dest, previousText);
-        } else {
-          removeLink(dest);
-          if (previous) makeLink(previous, dest);
-        }
+        removeLink(dest);
+        if (previous) makeLink(previous, dest);
       } catch { /* best effort rollback */ }
     }
     fail(`install failed and was rolled back: ${error.message}`);
+  }
+  let extensionRemoved = null;
+  if (legacyExtension) {
+    try { extensionRemoved = removeManagedExtension(); } catch (error) {
+      process.stderr.write(`${PRODUCT} warning: could not remove the omp extension loader ${legacyExtension}: ${error.message}\n`);
+    }
   }
   prune(bundle.name);
 
@@ -649,8 +647,8 @@ export function cmdInstall(opts) {
     const lines = [`${PRODUCT} ${bundle.version} → ${bundle.bundleDir}`];
     for (const h of plan) {
       lines.push(`${h.host.padEnd(9)} ${counts(h.skills).padEnd(22)} ${h.dir}`);
-      if (h.extension) lines.push(`${h.host.padEnd(9)} ${('extension ' + h.extension.change).padEnd(22)} ${h.extension.dest}`);
     }
+    if (extensionRemoved) lines.push(`${'omp'.padEnd(9)} ${'extension removed'.padEnd(22)} ${extensionRemoved}`);
     for (const c of completion) lines.push(`${('completion ' + c.shell).padEnd(9)} ${c.change.padEnd(22)} ${c.file}`);
     if (completion.some(c => ['created', 'updated'].includes(c.change))) lines.push('Open a new shell to load tab completion.');
     for (const c of completion) {
@@ -671,29 +669,18 @@ export function cmdInstall(opts) {
 
 function cmdStatus(opts) {
   const bundle = renderBundle();
-  const hosts = Object.keys(HOSTS).map(key => {
-    const extension = extensionState(key);
-    return {
-      host: key,
-      present: hostPresent(key),
-      dir: hostDir(key),
-      skills: bundle.personas.map(persona => {
-        const name = `${SKILL_PREFIX}${persona}`;
-        const dest = path.join(hostDir(key), name);
-        const change = classify(dest, path.join(bundle.bundleDir, name));
-        const state = { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[change];
-        return { name, state };
-      }),
-      ...(extension
-        ? {
-            extension: {
-              path: extension.dest,
-              state: { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[extension.change],
-            },
-          }
-        : {}),
-    };
-  });
+  const hosts = Object.keys(HOSTS).map(key => ({
+    host: key,
+    present: hostPresent(key),
+    dir: hostDir(key),
+    skills: bundle.personas.map(persona => {
+      const name = `${SKILL_PREFIX}${persona}`;
+      const dest = path.join(hostDir(key), name);
+      const change = classify(dest, path.join(bundle.bundleDir, name));
+      const state = { created: 'missing', unchanged: 'managed-current', updated: 'managed-stale', conflict: 'conflict' }[change];
+      return { name, state };
+    }),
+  }));
   let bundles = [];
   try { bundles = fs.readdirSync(bundlesRoot()).sort(); } catch { /* none */ }
   const listing = bundles.map(name => ({ name, current: name === bundle.name }));
@@ -705,7 +692,6 @@ function cmdStatus(opts) {
   for (const h of hosts) {
     lines.push(`${h.host.padEnd(9)} ${h.present ? 'present' : 'absent'}  ${h.dir}`);
     for (const s of h.skills) lines.push(`  ${s.name.padEnd(22)} ${s.state}`);
-    if (h.extension) lines.push(`  ${path.basename(h.extension.path).padEnd(22)} ${h.extension.state}`);
   }
   lines.push(`bundles (${bundlesRoot()}):`);
   if (!listing.length) lines.push('  (none)');
@@ -736,8 +722,8 @@ export function cmdUninstall(opts) {
     }
     let extensionRemoved = false;
     if (key === 'omp' && hasManagedExtension()) {
-      try { fs.rmSync(extensionPath('omp'), { force: true }); extensionRemoved = true; } catch (error) {
-        process.stderr.write(`${PRODUCT} warning: could not remove ${extensionPath('omp')}: ${error.message}\n`);
+      try { fs.rmSync(ompExtensionPath(), { force: true }); extensionRemoved = true; } catch (error) {
+        process.stderr.write(`${PRODUCT} warning: could not remove ${ompExtensionPath()}: ${error.message}\n`);
       }
     }
     result.push({ host: key, dir: hostDir(key), removed, extensionRemoved });
@@ -772,6 +758,6 @@ export function cmdUninstall(opts) {
   if (!result.length) process.stdout.write(`${PRODUCT}: nothing to uninstall\n`);
   for (const h of result) {
     process.stdout.write(`${h.host.padEnd(9)} ${h.removed} removed  ${h.dir}\n`);
-    if (h.extensionRemoved) process.stdout.write(`${h.host.padEnd(9)} extension removed  ${extensionPath(h.host)}\n`);
+    if (h.extensionRemoved) process.stdout.write(`${h.host.padEnd(9)} extension removed  ${ompExtensionPath()}\n`);
   }
 }

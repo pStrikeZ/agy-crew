@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { accountHome, tokenPath } from './state.mjs';
+import { accountInLoan } from './loans.mjs';
 import { quotaPool } from './results.mjs';
 
 export const findAccount = (pool, name) => pool.accounts.find((a) => a.name === name) || null;
@@ -7,6 +8,19 @@ export const leasesOn = (pool, name) => pool.leases.filter((l) => l.account === 
 /** A hold means a process outside agy-crew is using the account's credential. */
 export const holdOn = (pool, name) => pool.leases.find((l) => l.account === name && l.role === 'hold') || null;
 const defaultHasToken = (name) => fs.existsSync(tokenPath(accountHome(name)));
+
+/** How many concurrent agent-dispatched runs an account accepts; unset means one. */
+export const DEFAULT_PARALLEL = 1;
+export const parallelOf = (account) =>
+  (Number.isInteger(account?.parallel) && account.parallel > 0 ? account.parallel : DEFAULT_PARALLEL);
+
+/** True when the account cannot take another run: a lent credential is always
+ *  exclusive, and otherwise its parallel limit decides. */
+const atParallel = (pool, name) => {
+  if (accountInLoan(pool, name)) return true;
+  const account = findAccount(pool, name);
+  return leasesOn(pool, name).length >= parallelOf(account);
+};
 
 export function activeCooldown(pool, name, family, now) {
   const c = pool.cooldowns[`${name}|${family}`];
@@ -59,6 +73,17 @@ function rank(pool, family, withLeases) {
 
 const unavailableCooldown = (c) => c?.reason === 'upstream_unavailable';
 
+/** Why an account cannot take another run now, naming the remedy. */
+function parallelMessage(pool, name) {
+  if (accountInLoan(pool, name)) {
+    return `account ${name} is part of a credential loan (a lent credential supports one run only); wait for the loan to finish`;
+  }
+  const account = findAccount(pool, name);
+  const cap = parallelOf(account);
+  return `account ${name} is at its concurrency limit (${leasesOn(pool, name).length}/${cap} slot(s) in use). ` +
+    `Wait for one to finish, or raise the limit with \`accounts parallel ${name} <n>\`.`;
+}
+
 function coolingError(pool, accounts, family, now) {
   const rows = accounts.map((a) => {
     const c = activeCooldown(pool, a.name, family, now);
@@ -89,9 +114,10 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (!a) return { error: { message: `conversation ${conversation} belongs to account ${conversationAccount}, which no longer exists` } };
     if (a.disabled) return { error: { message: `conversation ${conversation} belongs to account ${a.name}, which is disabled (accounts enable ${a.name})` } };
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `conversation ${conversation} belongs to account ${a.name}, which needs login (accounts login ${a.name})` } };
+    if (holdOn(pool, a.name)) return { account: a.name, needsLoan: true, retry_at: null, reason: 'held' };
+    if (atParallel(pool, a.name)) return { error: { reason: 'busy', message: parallelMessage(pool, a.name) } };
     const c = activeCooldown(pool, a.name, family, now);
     if (c) return { account: a.name, needsLoan: true, retry_at: c.retry_at, reason: c.reason || 'quota_exhausted' };
-    if (holdOn(pool, a.name)) return { account: a.name, needsLoan: true, retry_at: null, reason: 'held' };
     return { account: a.name };
   }
   if (requested === 'live') return { account: 'live' };
@@ -101,6 +127,7 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
     if (a.disabled) return { error: { message: `account ${a.name} is disabled (accounts enable ${a.name})` } };
     if (a.auth_error_at || !hasToken(a.name)) return { error: { message: `account ${a.name} needs login (accounts login ${a.name})` } };
     if (holdOn(pool, a.name)) return { error: { reason: 'held', message: `account ${a.name} is held by another process. Use \`--account auto\` or another account.` } };
+    if (atParallel(pool, a.name)) return { error: { reason: 'busy', message: parallelMessage(pool, a.name) } };
     const c = activeCooldown(pool, a.name, family, now);
     if (c) {
       const why = unavailableCooldown(c) ? `was unavailable upstream (503) for ${family}; retry after` : `has no ${family} quota until`;
@@ -111,8 +138,17 @@ export function chooseAccount(pool, { requested = 'auto', family, conversation =
   }
   const enabled = pool.accounts.filter((a) => !a.disabled);
   if (!enabled.length) return { account: 'live' };
-  const candidates = enabled.filter((a) => usable(pool, a, family, now, hasToken));
+  const candidates = enabled.filter((a) => usable(pool, a, family, now, hasToken) && !atParallel(pool, a.name));
   if (!candidates.length) {
+    const blocked = enabled.filter((a) => usable(pool, a, family, now, hasToken) && atParallel(pool, a.name));
+    if (blocked.length) {
+      const rows = blocked.map((a) => accountInLoan(pool, a.name)
+        ? `  ${a.name}: credential on loan, one run only`
+        : `  ${a.name}: ${leasesOn(pool, a.name).length}/${parallelOf(a)} slot(s) in use`);
+      return { error: { reason: 'busy',
+        message: `every usable pool account is busy:\n${rows.join('\n')}\n` +
+          'Wait for a run or loan to finish, or raise a limit with `accounts parallel <name> <n>`.' } };
+    }
     const cooling = enabled.filter((a) => activeCooldown(pool, a.name, family, now) || exhaustedSnapshot(pool, a.name, family, now));
     if (cooling.length) return coolingError(pool, cooling, family, now);
     return { error: { message: 'no pool account is ready: each enabled account needs login (see `accounts list`)' } };

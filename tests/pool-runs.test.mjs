@@ -88,6 +88,52 @@ test('auto spreads two concurrent background jobs over two accounts', async () =
   assert.deepEqual(readPool(sb).leases, []);
 });
 
+test('one account takes one run until accounts parallel raises its limit', async () => {
+  const sb = sandbox('pool-parallel-runs');
+  seedPool(sb, [{ name: 'a', email: 'a@x' }]);
+  const env = withEnvFile(sb, { FAKE_AGY_SLEEP_MS: '6000' });
+  const waitForLease = async (n = 1) => {
+    for (let i = 0; i < 250; i++) {
+      try { const leases = readPool(sb).leases; if (leases.length >= n) return leases; } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`the run never took ${n} lease(s)`);
+  };
+
+  const first = jobIdOf(run(sb, ['staffer', '--prompt', 'one'], env).stdout);
+  assert.equal((await waitForLease()).length, 1);
+
+  const refused = run(sb, ['staffer', '--prompt', 'two'], env);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /every usable pool account is busy:\n  a: 1\/1 slot\(s\) in use/);
+  assert.match(refused.stderr, /accounts parallel <name> <n>/);
+
+  assert.equal(run(sb, ['accounts', 'parallel', 'a', '2']).code, 0);
+  const second = jobIdOf(run(sb, ['staffer', '--prompt', 'three'], env).stdout);
+  assert.equal((await waitForLease(2)).length, 2, 'the raised limit admits a second run');
+
+  assert.equal(await waitForJob(sb, first), 'done');
+  assert.equal(await waitForJob(sb, second), 'done');
+  assert.deepEqual(readPool(sb).leases, []);
+});
+
+test('a conversation cannot borrow while another run holds its account', () => {
+  const sb = sandbox('pool-loan-busy');
+  twoAccounts(sb);
+  assert.equal(run(sb, ['ask', '--account', 'a', '--prompt', 'start'], withEnvFile(sb)).code, 0);
+  const pool = readPool(sb);
+  pool.accounts.find((a) => a.name === 'a').parallel = 2;
+  pool.cooldowns[`a|${FAMILY}`] = { retry_at: new Date(Date.now() + 3_600_000).toISOString(), reason: 'quota_exhausted' };
+  pool.leases.push({ id: 'busy', account: 'a', pid: process.pid, job_id: null, role: 'run', started_at: '' });
+  writePool(sb, pool);
+
+  const r = run(sb, ['continue', '--conversation', 'conv-1', '--prompt', 'more'], withEnvFile(sb));
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /cannot borrow a credential while another run uses it/);
+  assert.deepEqual(readPool(sb).loans, [], 'no loan is started');
+  assert.equal(agyCalls(sb).length, 1, 'agy is not called again');
+});
+
 test('a continuation is pinned to the account that owns the conversation', () => {
   const sb = sandbox('pool-pinned');
   twoAccounts(sb);

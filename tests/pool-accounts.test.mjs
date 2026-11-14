@@ -112,6 +112,32 @@ test('enable and disable toggle selection state', () => {
   assert.match(unknown.stderr, /unknown account "ghost"/);
 });
 
+test('accounts parallel sets and shows the per-account run limit', () => {
+  const sb = sandbox('pool-parallel');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
+  assert.equal(list(sb).accounts[0].parallel, 1, 'unset means one');
+
+  const r = run(sb, ['accounts', 'parallel', 'a', '3']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /at most 3 concurrent agy-crew run\(s\)/);
+  assert.equal(readPool(sb).accounts[0].parallel, 3);
+  assert.equal(list(sb).accounts[0].parallel, 3);
+  assert.match(run(sb, ['accounts', 'parallel', 'a']).stdout, /at most 3 concurrent/);
+  assert.match(run(sb, ['accounts', 'list']).stdout, /a +a@example\.com +ready/);
+
+  for (const bad of ['0', '1.5', '65', 'many']) {
+    const refused = run(sb, ['accounts', 'parallel', 'a', bad]);
+    assert.equal(refused.code, 1, bad);
+    assert.match(refused.stderr, /parallel must be an integer from 1 to 64/);
+  }
+  assert.equal(run(sb, ['accounts', 'parallel', 'ghost', '2']).code, 1);
+  assert.match(run(sb, ['accounts', 'parallel']).stderr, /usage: accounts parallel <name> \[<n>\]/);
+
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }], (p) => p.leases.push({ id: 'l', account: 'a', pid: process.pid, role: 'run' }));
+  assert.equal(run(sb, ['accounts', 'parallel', 'a', '2']).code, 0, 'changing the limit does not require an idle account');
+  assert.match(run(sb, ['accounts', 'list']).stdout, /a +a@example\.com +busy 1 +never +2$/m);
+});
+
 test('remove previews without --yes, then deletes account data and bindings', () => {
   const sb = sandbox('pool-remove');
   seedPool(sb, [{ name: 'a', email: 'a@example.com' }, { name: 'b', email: 'b@example.com' }], (p) => {

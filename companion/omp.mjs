@@ -17,12 +17,12 @@ import { modelFamily } from './pool/results.mjs';
 import { readToken } from './pool/token.mjs';
 import { warmUp } from './pool/quota.mjs';
 import { readOmpCredential } from '../omp/credential.mjs';
-import { ompExtensionProblem } from './install.mjs';
+import { installOmpExtension, ompExtensionPath, uninstallOmpExtension } from './install.mjs';
 
 const DEFAULT_FAMILY = 'gemini-3.8-flash';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
 
-const OMP_USAGE = `usage: ${PRODUCT} omp [<name>] [--family <family>] [-- <omp args>...]`;
+const OMP_USAGE = `usage: ${PRODUCT} omp --use-at-my-own-risk [<name>] [--family <family>] [-- <omp args>...]`;
 
 function parseOmpArgs(rest, defaultFamily) {
   const split = rest.indexOf('--');
@@ -32,9 +32,11 @@ function parseOmpArgs(rest, defaultFamily) {
   let family = modelFamily(defaultFamily || DEFAULT_FAMILY);
   let familyExplicit = false;
   let help = false;
+  let risk = false;
   for (let i = 0; i < own.length; i++) {
     const value = own[i];
     if (value === '--help' || value === '-h') help = true;
+    else if (value === '--use-at-my-own-risk') risk = true;
     else if (value === '--family') {
       family = own[++i];
       if (!family || family.startsWith('-')) throw new PoolError('flag --family needs a value');
@@ -57,7 +59,7 @@ function parseOmpArgs(rest, defaultFamily) {
     const parsed = model ? modelFamily(String(model).split('/').pop()) : null;
     if (parsed) family = parsed;
   }
-  return { account: account || 'auto', family, args, help };
+  return { account: account || 'auto', family, args, help, risk };
 }
 
 function modelArg(args) {
@@ -192,60 +194,66 @@ function ompHelp() {
 Run omp with one agy-crew pool account. The account is held until omp exits;
 the bundled omp extension seeds its credential and rewrites omp's block-0 role.
 
-  <name>                       pool account; auto by default
-  --family <family>            quota family for selection (default ${DEFAULT_FAMILY})
-  -- <omp args>...             passed to omp unchanged
+  --use-at-my-own-risk        required: the omp extension is installed for this
+                              run only and removed when omp exits
+  <name>                      pool account; auto by default
+  --family <family>           quota family for selection (default ${DEFAULT_FAMILY})
+  -- <omp args>...            passed to omp unchanged
 
-The omp extension must be installed first; without it this command refuses to start:
-  agy-crew install --hosts omp
-or, from the npm package:
-  omp plugin install agy-crew
+The extension is written to ${ompExtensionPath()} before omp starts and removed
+afterwards. A file you put there yourself is never overwritten.
 `;
 }
 
+const OMP_RISK_MESSAGE =
+  `${PRODUCT} omp refuses to run without --use-at-my-own-risk.\n` +
+  `It writes the ${PRODUCT} omp extension to ${ompExtensionPath()}, runs omp with a pool ` +
+  'credential, and removes the extension when omp exits. Loading an installed extension into ' +
+  'omp this way is not a supported omp interface and can break the session.\n' +
+  `Pass --use-at-my-own-risk to accept that risk:\n  ${OMP_USAGE}`;
+
 /** Resolve to omp's exit code. deps: { agyCommand, defaultFamily }. */
 export async function cmdOmp(rest, deps) {
-  const { account, family, args, help } = parseOmpArgs(rest, deps.defaultFamily);
+  const { account, family, args, help, risk } = parseOmpArgs(rest, deps.defaultFamily);
   if (help) {
     process.stdout.write(ompHelp());
     return 0;
   }
-  // Without the extension omp starts normally but never sees the pool account:
-  // google-antigravity stays paused and the session silently runs on whatever
-  // else is configured. Refuse before taking a hold.
-  if (process.env.AGY_CREW_OMP_SKIP_INSTALL_CHECK !== '1') {
-    const problem = ompExtensionProblem();
-    if (problem) {
-      throw new PoolError(
-        `${problem}. Run \`${PRODUCT} install --hosts omp\` (or \`omp plugin install ${PRODUCT}\`), then start \`${PRODUCT} omp\` again.`,
-      );
-    }
-  }
-  const picked = acquire(account, family);
+  if (!risk) throw new PoolError(OMP_RISK_MESSAGE);
+  // Install the extension only for this run: omp must load it at startup, and
+  // nothing is left behind when the session ends.
+  const extension = installOmpExtension();
   try {
-    await ensureFresh(picked.name, deps.agyCommand);
-    // Resolve and cache the Cloud Code project before omp starts. The extension
-    // registers a synchronous credential at load time; without the cached
-    // project, model discovery would see no credential and fall back.
+    const picked = acquire(account, family);
     try {
-      await readOmpCredential(picked.name);
-    } catch (error) {
-      throw new PoolError(error?.message || String(error));
+      await ensureFresh(picked.name, deps.agyCommand);
+      // Resolve and cache the Cloud Code project before omp starts. The extension
+      // registers a synchronous credential at load time; without the cached
+      // project, model discovery would see no credential and fall back.
+      try {
+        await readOmpCredential(picked.name);
+      } catch (error) {
+        throw new PoolError(error?.message || String(error));
+      }
+      const env = {
+        AGY_CREW_HOME: globalHome(),
+        AGY_CREW_OMP_ACCOUNT: picked.name,
+        AGY_CREW_OMP_FAMILY: family,
+        // Antigravity Flash carries a 60s first-event budget in omp's catalog.
+        // A cold Gemini start can exceed it, and omp then aborts the turn with
+        // "Request was aborted" before any token arrives. Give the bridge the
+        // same five-minute budget omp uses for other providers; an explicit
+        // user setting still wins.
+        PI_STREAM_FIRST_EVENT_TIMEOUT_MS: process.env.PI_STREAM_FIRST_EVENT_TIMEOUT_MS ?? '300000',
+      };
+      env.AGY_CREW_OMP_HOLD = picked.holdId;
+      return await runOmp(args, env);
+    } finally {
+      release(picked.holdId);
     }
-    const env = {
-      AGY_CREW_HOME: globalHome(),
-      AGY_CREW_OMP_ACCOUNT: picked.name,
-      AGY_CREW_OMP_FAMILY: family,
-      // Antigravity Flash carries a 60s first-event budget in omp's catalog.
-      // A cold Gemini start can exceed it, and omp then aborts the turn with
-      // "Request was aborted" before any token arrives. Give the bridge the
-      // same five-minute budget omp uses for other providers; an explicit
-      // user setting still wins.
-      PI_STREAM_FIRST_EVENT_TIMEOUT_MS: process.env.PI_STREAM_FIRST_EVENT_TIMEOUT_MS ?? '300000',
-    };
-    env.AGY_CREW_OMP_HOLD = picked.holdId;
-    return await runOmp(args, env);
   } finally {
-    release(picked.holdId);
+    if (!uninstallOmpExtension(extension)) {
+      process.stderr.write(`${PRODUCT} warning: could not remove the temporary omp extension ${extension.dest}\n`);
+    }
   }
 }

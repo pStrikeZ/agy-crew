@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { accountEnv } from './env.mjs';
 import { accountHome, loadPool, poolExists, updatePool } from './state.mjs';
 import { parseResetsIn } from './results.mjs';
-import { chooseAccount, chooseLender, findAccount } from './select.mjs';
+import { chooseAccount, chooseLender, findAccount, leasesOn } from './select.mjs';
 import { beginLoan, endLoan } from './loans.mjs';
 
 export const boundAccount = (pool, conversation) =>
@@ -39,6 +39,13 @@ export function acquireRun(req) {
     const account = findAccount(pool, pick.account);
     account.last_used_at = base.started_at;
     if (pick.needsLoan) {
+      // A lent credential supports one run only. The borrower's HOME carries
+      // the lender's token for the loan's duration, so a second run there
+      // would share the lent credential.
+      if (leasesOn(pool, pick.account).some((lease) => lease.role !== 'hold')) {
+        return { error: { reason: 'busy',
+          message: `account ${pick.account} cannot borrow a credential while another run uses it; retry when that run finishes.` } };
+      }
       const lender = chooseLender(pool, { family: req.family, exclude: [pick.account] });
       if (!lender) {
         const why = pick.reason === 'held' ? 'is held by another process'

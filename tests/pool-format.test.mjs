@@ -85,8 +85,9 @@ test('accounts list aligns its columns and puts quota and cooldowns in their own
   assert.equal(rows.length, 2);
   const col = head.indexOf('STATE');
   assert.equal(head.indexOf('EMAIL'), 'longer-name'.length + 2);
-  assert.match(rows[0].slice(col), /^cooling +9m ago$/);
-  assert.match(rows[1].slice(col), /^busy 1 +never$/);
+  assert.match(head, /LAST USED +PARALLEL$/);
+  assert.match(rows[0].slice(col), /^cooling +9m ago +1$/);
+  assert.match(rows[1].slice(col), /^busy 1 +never +1$/);
   assert.ok(lines.includes('live         your own agy login, never pooled'));
   assert.ok(lines.some((l) => /^QUOTA {8}POOL/.test(l)));
   assert.ok(lines.some((l) => /^a {12}gemini {2}25%  resets in 3h00m .* 100%  resets in 3d 0h .* 2m ago$/.test(l)), r.stdout);

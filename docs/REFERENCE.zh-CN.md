@@ -260,15 +260,17 @@ review --prompt "Review the patch at /tmp/change.patch"
 
 | 命令 | 作用 |
 | --- | --- |
-| `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`held`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 输出不变 |
+| `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`held`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），以及 `PARALLEL` 列（该账号的并发运行上限），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 额外给出每个账号的 `parallel` 上限 |
 | `accounts login <name>` | 交互式登录：添加新账号，或为已有账号重新登录。见[登录](#登录) |
 | `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
 | `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
+| `accounts parallel <name> [<n>]` | 一个账号同时可以被多少个由 agent（skill）发起的任务持有。不带 `<n>` 时显示当前上限；带上时设为 1–64，未设置视为 1。修改不要求账号空闲，也不会改动令牌。交互式 `start`/`omp` 仍独占账号；凭据处于借用中时该上限不生效 |
 | `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个模型家族，不指定则全部清除 |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
 | `start [<name>] [--model <id>] [-- <agy args>...]` | 在当前终端、当前目录下、在共享 home 中交互式运行 agy，使用 `<name>` 的凭据；不带账号名时使用某个有额度的空闲账号的凭据。见[交互式会话](#交互式会话) |
+| `omp --use-at-my-own-risk [<name>] [--family <f>] [-- <omp args>...]` | 用一个被持有的池账号运行 omp。该参数必填：自带 omp 扩展只在本次运行期间写入 `~/.omp/agent/extensions/agy-crew-omp.ts`，omp 退出时删除。`install` 不写该文件，也不会覆盖用户放在那里的文件 |
 | `accounts rename <old> <new>` | 重命名空闲账号：目录、冷却记录、配额快照和会话绑定一并迁移。账号处于租约或借用中、正在为共享会话出借凭据、或新名字已被占用或不合法时拒绝 |
 | `accounts refresh-email [<name>...] [--json]` | 从各账号的令牌文件重新读取邮箱（离线；可先跑 `accounts quota --refresh` 让 agy 续期令牌）并更新池记录。会报告 `updated`、`unchanged`、缺令牌、令牌里没有邮箱、或邮箱已被另一个账号占用（此时不改记录） |
 | `accounts remove <name> [--yes]` | 不带 `--yes` 时只列出将被删除的内容并以 0 退出。带 `--yes` 才会删除账号目录、冷却记录、配额快照和会话绑定，并报告有多少个会话因此无法继续。账号正处于租约或借用中时会拒绝 |
@@ -294,14 +296,14 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `<name>` | 使用该账号。账号不存在、已停用或需要登录时报错。若它在该模型家族上处于冷却，则报错并给出 `retry_at`，建议改用 `--account auto` 或其他模型家族 |
 | `auto` | 没有启用的池账号时用 live，否则按下面的规则挑选 |
 
-**`auto` 的选择规则。** 候选账号必须已启用、有令牌文件、没有认证错误、在该模型家族上没有生效的冷却，并且缓存的 Cloud Code 快照没有显示该家族所属配额池剩余为 0 且重置时间尚未到来。候选账号依次按以下条件排序：
+**`auto` 的选择规则。** 候选账号必须不属于任何凭据借用、已启用、有令牌文件、没有认证错误、在该模型家族上没有生效的冷却、缓存的 Cloud Code 快照没有显示该家族所属配额池剩余为 0 且重置时间尚未到来，并且当前租约数少于它的并行上限（`accounts parallel`，默认 1）。候选账号依次按以下条件排序：
 
 1. 当前租约最少（空闲账号优先于忙碌账号）；
 2. 已知的剩余配额比例最高（取短窗口和每周窗口中较小的一个，按 5% 一档比较，额度相近的账号按最久未使用轮换；未知的排在所有已知且大于 0 的值之后）；
 3. `last_used_at` 最早；
 4. 添加顺序。
 
-没有候选账号时，任务以 `quota_exhausted` 失败，并列出每个账号最早的 `retry_at`，建议使用 `--account live` 或换一个模型。只有显式指定账号名，或者 `auto` 找不到空闲候选时，才会有多个任务共用同一个账号（选择负载最小的）。
+没有候选账号时，任务以 `quota_exhausted` 失败，并列出每个账号最早的 `retry_at`，建议使用 `--account live` 或换一个模型。如果所有可用账号都只是忙碌，则以 `busy` 失败并列出已占用的槽位。只有用 `accounts parallel <name> <n>` 把某个账号的上限提高到 1 以上，多个由 agent 发起的任务才会共用该账号；显式指定 `--account <name>` 时同样受该上限约束。凭据处于借用中时始终独占：借出方和借用方都会被跳过，上限不再放行任何任务，直到借用结束。交互式 `start`、`agy-crew omp`、外部持有和凭据借用仍然要求账号完全空闲。
 
 选择账号和写入租约在同一次加锁更新中完成，agy 进程结束后释放。进程已经退出的租约会被自动清理。
 
@@ -332,10 +334,11 @@ review --prompt "Review the patch at /tmp/change.patch"
 会话历史保存在所属账号的 HOME 中，但发出请求所用的凭据可以来自另一个账号。当会话绑定在池账号 B 上，而 B 在该模型家族上处于冷却时（无论是续跑开始时，还是运行中途遇到配额错误），companion 会借用空闲账号 L 的凭据：
 
 1. 出借方 L 的选择方式与 `auto` 候选相同，此外还要求它没有任何租约，也不在其他借用中。live 永远不出借。
-2. 在同一次加锁更新中记录借用：L 获得出借方租约，B 获得运行租约。
-3. 在 B 的令牌目录中，把 B 的令牌重命名为 `.antigravity-oauth-token.agy-crew.loan-backup`（仅在令牌存在时；已存在备份则放弃借用），再把 L 的令牌复制到 B 的令牌路径。
-4. agy 以 B 的 HOME 运行，因此能读到 B 的会话，而发出请求的是 L 的凭据。借用期间出现的配额冷却记在 L 名下。
-5. 结束后在 `finally` 中，把 B 当前的令牌（agy 可能已经刷新过）复制回 L 的令牌路径，删除 B 的令牌，再把备份改回原名，最后移除借用记录及其租约。
+2. 只有当 B 没有其他运行租约时才会开始借用。此后 B 的 HOME 中存放的是 L 的令牌，所以这份被出借的凭据只支持一个任务：在借用恢复之前，B 和 L 都不会再接新任务，无论它们的 `accounts parallel` 上限是多少。
+3. 在同一次加锁更新中记录借用：L 获得出借方租约，B 获得运行租约。
+4. 在 B 的令牌目录中，把 B 的令牌重命名为 `.antigravity-oauth-token.agy-crew.loan-backup`（仅在令牌存在时；已存在备份则放弃借用），再把 L 的令牌复制到 B 的令牌路径。
+5. agy 以 B 的 HOME 运行，因此能读到 B 的会话，而发出请求的是 L 的凭据。借用期间出现的配额冷却记在 L 名下。
+6. 结束后在 `finally` 中，把 B 当前的令牌（agy 可能已经刷新过）复制回 L 的令牌路径，删除 B 的令牌，再把备份改回原名，最后移除借用记录及其租约。
 
 **崩溃恢复。** 每次加锁更新之前都会先清理失效进程：进程已退出的租约会被丢弃，进程已退出的借用按同样的步骤恢复（出借方拿回刷新后的令牌，借用方的原始令牌也回到原位）。账号处于租约或借用中时，`accounts remove` 和 `accounts login` 会拒绝执行。
 
@@ -407,6 +410,7 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
 | 情况 | 原因与输出 | 退出码 |
 | --- | --- | --- |
 | `auto` 没有候选账号，或运行中遇到配额错误且没有可借用的出借方 | `quota_exhausted`，附 `retry_at`（没有候选时按账号分别列出） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
+| 所有可用账号忙碌（达到并行上限或凭据借用中），或指定账号达到其上限 | `busy`，列出已占用槽位或借用状态，并提示 `accounts parallel` | 1 |
 | 模型返回 503 / 没有容量，且没有账号或出借方可以继续 | `upstream_unavailable`，附 `retry_at`（最后一次 503 之后 3 分钟） | 已有会话 ID 时为 5，否则为 1；后台任务相应地以 `attention` 或 `error` 结束 |
 | 池账号认证失败 | 账号标记为 `needs login`，不重试 | 按普通错误处理 |
 | 显式指定的 `--account <name>` 不存在、已停用、被持有、处于冷却或需要登录 | 启动前报错并说明原因 | 1 |
@@ -568,7 +572,7 @@ agy-crew install
 | `agy-crew uninstall [--hosts …\|--all]` | 只移除安装器自己创建的链接 |
 | `agy-crew completion <bash\|zsh\|fish\|powershell>` | 打印 tab 补全脚本（`source <(agy-crew completion bash)`，zsh/fish 同理；PowerShell 用 `agy-crew completion powershell \| Out-String \| Invoke-Expression`）。补全命令、参数、参数值（模型、effort、host）、账号名和任务 id；shell 通过隐藏命令 `agy-crew __complete <words…>` 取候选 |
 
-在 `omp` host 上，`install` 还会写入 `~/.omp/agent/extensions/agy-crew-omp.ts`：一个受管的 loader，重新导出包内的 `omp/extension.mjs`。`agy-crew omp` 需要这个扩展；`uninstall` 会随链接一起移除它。该路径若已有非本安装器创建的文件，会作为冲突中止安装，不写入任何内容。
+`install` 不再写入 omp 扩展 loader。`agy-crew omp --use-at-my-own-risk` 会为单次运行写入 `~/.omp/agent/extensions/agy-crew-omp.ts`，omp 退出时删除。该路径上的非本工具文件绝不会被覆盖：命令会拒绝启动，直到用户把它移走。`install` 和 `uninstall` 会移除 0.9.14 及更早版本留下的受管 loader。
 
 ### 支持的 host
 
@@ -617,7 +621,7 @@ agy-crew 与上游 [agy-staff](https://github.com/keli-wen/agy-staff) 不能安�
 
 ## 升级
 
-Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.14`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
+Claude Code 和 Codex 按版本号缓存插件，例如 `cache/agy-crew/agy-crew/0.9.15`。缓存是否需要更新取决于版本号，而不是仓库的最新提交。因此，准备发布时需要同步更新两个插件 manifest 和 `package.json` 中的版本。
 
 ### 终端命令（`agy-crew install`）
 

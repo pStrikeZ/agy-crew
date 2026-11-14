@@ -34,7 +34,7 @@
  *                                   or coexist with upstream agy-staff
  *   uninstall [--hosts a,b | --all] [--json]
  *                                   remove only the links install created
- *   accounts <list|login|import|remove|enable|disable|cooldown|hold|quota>
+ *   accounts <list|login|import|remove|enable|disable|parallel|cooldown|hold|quota>
  *                                   manage the pool of private agy logins
  *   _worker <job-id>                (internal) background job executor
  *
@@ -2190,15 +2190,17 @@ Accounts
                                             with the credential of <name>, or of an idle account
                                             that has quota for --model. The account is held
                                             until agy exits
-  omp [<name>] [--family <f>] [-- <omp args>]
-                                            run omp on one held pool account; the bundled
-                                            omp extension seeds the credential and rewrites
-                                            omp's block-0 role. Requires the omp plugin
+  omp --use-at-my-own-risk [<name>] [--family <f>] [-- <omp args>]
+                                            run omp on one held pool account; installs
+                                            the bundled omp extension for this run only
+                                            and removes it when omp exits
   accounts list [--json]                    accounts, state, quota and cooldowns
   accounts quota [<name>...] [--refresh]    quota snapshots (--refresh asks Google)
   accounts login <name>                     browser sign-in (run it yourself, in a terminal)
   accounts import <name> --home <dir>       copy a token from a HOME-shaped directory
   accounts enable|disable <name>            include in or exclude from selection
+  accounts parallel <name> [<n>]            concurrent runs allowed on one account
+                                            (default 1)
   accounts remove <name> [--yes]            delete an account
   accounts rename <old> <new>               rename an idle account, keeping its state
   accounts refresh-email [<name>...] [--json]
