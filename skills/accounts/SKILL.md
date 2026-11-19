@@ -30,11 +30,12 @@ node "<skill-dir>/../../companion/agy-companion.mjs" accounts <subcommand> [args
 | `accounts quota [<name>...] [--refresh] [--json]` | The same `QUOTA` table and `COOLDOWNS` section, from cached snapshots. `--refresh` queries Google's Cloud Code service and updates the snapshots; it is the only subcommand that uses the network. |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json`) from an existing HOME-shaped directory, for example an agy-cli-manager account. |
 | `accounts enable <name>` / `accounts disable <name>` | Put an account into or out of automatic selection. |
+| `accounts start-home [shared\|real]` | Which HOME `start` uses by default (unset means `shared`). `real` puts the account's credential into the user's `~/.gemini` for the session and restores what was there. Change it only when the user asks. |
 | `accounts parallel <name> [<n>]` | How many agent-dispatched runs may hold one account at once. Without `<n>` it prints the current limit; with it, sets 1–64. Unset or removed means 1. `start` and `agy-crew omp` still hold an account exclusively, and a credential on loan ignores the limit. |
 | `accounts cooldown clear <name> [--family <f>]` | Drop a recorded quota cooldown. Use it only when the user says the quota is back. |
 | `accounts remove <name> [--yes]` | Delete an account. Without `--yes` it only prints what would be deleted. |
 | `accounts login <name>` | Interactive sign-in. **Do not run this yourself**, see below. |
-| `start [<name>] [--model <id>] [-- <agy args>...]` | Interactive agy in the current directory, in the shared home whose conversations survive account switches, holding the lending account until agy exits: `<name>`, or without one an idle account with quota for `--model`. One credential at a time: a second `start` joins the running session. Needs the user's terminal: **do not run this yourself**; tell the user to run `agy-crew start` (or `agy-crew start <name>`). |
+| `start [<name>] [--model <id>] [--real-home\|--shared-home] [-- <agy args>...]` | Interactive agy in the current directory, in the shared home whose conversations survive account switches (or the user's real HOME with `--real-home`, so plugins installed there apply), holding the lending account until agy exits: `<name>`, or without one an idle account with quota for `--model`. One credential at a time: a second `start` joins the running session. Needs the user's terminal: **do not run this yourself**; tell the user to run `agy-crew start` (or `agy-crew start <name>`). |
 
 Add `--json` when you need to parse the output; otherwise read the table.
 

@@ -403,6 +403,35 @@ test('start <name> runs agy in this directory in the shared home with that accou
   assert.ok(pool.accounts.find((a) => a.name === 'b').last_used_at);
 });
 
+test('start-home real (or --real-home) runs agy in the real HOME and puts the user\'s own login back afterwards', async () => {
+  const sb = sandbox('pool-start-real');
+  seedPool(sb, [{ name: 'a', email: 'a@example.com' }]);
+  const realToken = path.join(sb.home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  fs.mkdirSync(path.dirname(realToken), { recursive: true });
+  fs.writeFileSync(realToken, JSON.stringify(tokenJson('own@example.com')));
+  const envFile = path.join(sb.root, 'env.jsonl');
+
+  assert.match(run(sb, ['accounts', 'start-home']).stdout, /shared home/);
+  assert.match(run(sb, ['accounts', 'start-home', 'bogus']).stderr, /usage: accounts start-home/);
+  assert.match(run(sb, ['start', '--real-home', '--shared-home']).stderr, /not both/);
+
+  const viaFlag = await runAsync(sb, ['start', '--real-home'], { FAKE_AGY_ENV_FILE: envFile });
+  assert.equal(viaFlag.code, 0);
+  assert.deepEqual(envCalls(envFile).map((c) => [c.HOME, c.account_email]), [[sb.home, 'a@example.com']]);
+  assert.equal(emailOfToken(realToken), 'own@example.com', 'the user\'s own token is back');
+  assert.deepEqual(fs.readdirSync(path.dirname(realToken)).filter((f) => f.includes('backup')), []);
+  assert.equal(readPool(sb).shared, null);
+
+  assert.match(run(sb, ['accounts', 'start-home', 'real']).stdout, /real home/);
+  fs.rmSync(envFile, { force: true });
+  const viaSetting = await runAsync(sb, ['start'], { FAKE_AGY_ENV_FILE: envFile });
+  assert.equal(viaSetting.code, 0);
+  assert.equal(envCalls(envFile)[0].HOME, sb.home, 'the setting is the default');
+  fs.rmSync(envFile, { force: true });
+  await runAsync(sb, ['start', '--shared-home'], { FAKE_AGY_ENV_FILE: envFile });
+  assert.equal(envCalls(envFile)[0].HOME, sharedHomeOf(sb), '--shared-home overrides the setting');
+});
+
 test('start refuses unknown, busy, disabled and signed-out accounts without launching agy', () => {
   const sb = sandbox('pool-start-refused');
   seedPool(sb, [
@@ -595,7 +624,8 @@ test('help and version', () => {
     assert.equal(r.code, 0, arg);
     assert.equal(r.stdout, bare.stderr, arg);
   }
-  assert.match(bare.stderr, /start \[<name>\] \[--model <id>\] \[-- <agy args>\]/);
+  assert.match(bare.stderr, /start \[<name>\] \[--model <id>\] \[--real-home\|--shared-home\] \[-- <agy args>\]/);
+  assert.match(bare.stderr, /accounts start-home \[shared\|real\]/);
   const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   for (const arg of ['version', '--version', '-v']) {
     const r = run(sb, [arg]);

@@ -111,7 +111,7 @@ test('completion: commands, subcommands, flags and flag values', () => {
   assert.deepEqual(complete(sb, 'install', '--hosts', 'claude,s'), ['claude,shared']);
   assert.deepEqual(complete(sb, 'completion', ''), ['bash', 'zsh', 'fish', 'powershell']);
   assert.deepEqual(complete(sb, 'start', 'w'), ['work']);
-  assert.deepEqual(complete(sb, 'start', '--'), ['--model', '--help', '--']);
+  assert.deepEqual(complete(sb, 'start', '--'), ['--model', '--real-home', '--shared-home', '--help', '--']);
   assert.deepEqual(complete(sb, 'start', 'work', '--', '--m'), [], 'after -- the words are agy\'s');
   assert.deepEqual(complete(sb, 'research', '--model', 'pro', '--m'), [], 'a used flag is not offered again');
 });

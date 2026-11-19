@@ -26,7 +26,7 @@ const COMMANDS = {
   setup: { flags: ['--apply', '--restrict'] },
   install: { flags: ['--hosts', '--all', '--dry-run', '--status', '--json', '--no-completion'] },
   uninstall: { flags: ['--hosts', '--all', '--dry-run', '--json'] },
-  start: { args: ['account'], flags: ['--model', '--help'], dashdash: true },
+  start: { args: ['account'], flags: ['--model', '--real-home', '--shared-home', '--help'], dashdash: true },
   omp: { args: ['account'], flags: ['--use-at-my-own-risk', '--family', '--help'], dashdash: true },
   completion: { args: ['shell'], flags: [] },
   version: { flags: [] }, help: { flags: [] },
@@ -42,6 +42,7 @@ const ACCOUNTS = {
   enable: { args: ['account'], flags: [] },
   disable: { args: ['account'], flags: [] },
   parallel: { args: ['account', 'n'], flags: [] },
+  'start-home': { args: ['starthome'], flags: [] },
   quota: { args: ['account*'], flags: ['--refresh', '--json'] },
   cooldown: { sub: { clear: { args: ['account'], flags: ['--family'] }, record: { args: ['account'], flags: ['--family', '--retry-at'] } } },
   hold: { sub: { acquire: { args: ['account'], flags: ['--pid', '--family', '--json'] }, release: { args: [], flags: ['--json'] } } },
@@ -74,7 +75,7 @@ function flagValues(flag, ctx) {
   }
 }
 
-const argValues = (kind, ctx) => ({ job: ctx.jobs, account: ctx.accounts, shell: () => SHELLS }[kind]?.() ?? []);
+const argValues = (kind, ctx) => ({ job: ctx.jobs, account: ctx.accounts, shell: () => SHELLS, starthome: () => ['shared', 'real'] }[kind]?.() ?? []);
 const starts = (list, prefix) => [...new Set(list)].filter((c) => c.startsWith(prefix));
 
 /** Candidates for the last word of `words` (the argv after the command name).

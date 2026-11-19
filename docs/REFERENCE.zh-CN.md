@@ -265,11 +265,12 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
 | `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
+| `accounts start-home [shared\|real]` | `start` 在哪个 HOME 里运行 agy。不带参数时显示当前值，未设置视为 `shared`。`start --real-home` / `--shared-home` 可对单次会话覆盖 |
 | `accounts parallel <name> [<n>]` | 一个账号同时可以被多少个由 agent（skill）发起的任务持有。不带 `<n>` 时显示当前上限；带上时设为 1–64，未设置视为 1。修改不要求账号空闲，也不会改动令牌。交互式 `start`/`omp` 仍独占账号；凭据处于借用中时该上限不生效 |
 | `accounts cooldown clear <name> [--family <f>]` | 清除该账号的冷却记录，可只清某个配额池（用其中任一家族名指定），不指定则全部清除 |
 | `accounts cooldown record <name> --family <f> --retry-at <time>` | 记录一条在 agy-crew 之外观察到的额度冷却，持续到给定的 ISO 8601 时间。时间已过，或早于正在生效的冷却时，不做任何改动。`--json` 输出 `{ "cooldown": ... }`，即此后生效的冷却 |
 | `accounts hold acquire <name> --pid <pid> [--family <f>] [--json]` / `accounts hold release <id> [--json]` | 在其他进程使用某个账号的凭据期间，让 agy-crew 不再使用它。见[外部持有](#外部持有) |
-| `start [<name>] [--model <id>] [-- <agy args>...]` | 在当前终端、当前目录下、在共享 home 中交互式运行 agy，使用 `<name>` 的凭据；不带账号名时使用某个有额度的空闲账号的凭据。见[交互式会话](#交互式会话) |
+| `start [<name>] [--model <id>] [--real-home\|--shared-home] [-- <agy args>...]` | 在当前终端、当前目录下、默认在共享 home 中（也可用真正的 HOME）交互式运行 agy，使用 `<name>` 的凭据；不带账号名时使用某个有额度的空闲账号的凭据。见[交互式会话](#交互式会话) |
 | `omp --use-at-my-own-risk [<name>] [--family <f>] [-- <omp args>...]` | 用一个被持有的池账号运行 omp。该参数必填：自带 omp 扩展只在本次运行期间写入 `~/.omp/agent/extensions/agy-crew-omp.ts`，omp 退出时删除。`install` 不写该文件，也不会覆盖用户放在那里的文件 |
 | `accounts rename <old> <new>` | 重命名空闲账号：目录、冷却记录、配额快照和会话绑定一并迁移。账号处于租约或借用中、正在为共享会话出借凭据、或新名字已被占用或不合法时拒绝 |
 | `accounts refresh-email [<name>...] [--json]` | 从各账号的令牌文件重新读取邮箱（离线；可先跑 `accounts quota --refresh` 让 agy 续期令牌）并更新池记录。会报告 `updated`、`unchanged`、缺令牌、令牌里没有邮箱、或邮箱已被另一个账号占用（此时不改记录） |
@@ -352,9 +353,11 @@ agy-crew 之外的进程如果用某个池账号凭据的副本运行 agy，可�
 
 ### 交互式会话
 
-`start [<name>] [--model <id>] [-- <agy args>...]` 在当前目录、连接当前终端运行 agy，这样不用自己登录 agy 就能手动使用账号池。`--` 之后的参数原样传给 agy。`--model <id>` 也会传给 agy（只能给一次，写在 `--` 前后均可），并由它的模型家族决定哪些账号有额度；不给时使用默认模型的家族（`gemini-3.8-flash`）。`start --help` 输出用法以及各账号的邮箱和状态。
+`start [<name>] [--model <id>] [--real-home|--shared-home] [-- <agy args>...]` 在当前目录、连接当前终端运行 agy，这样不用自己登录 agy 就能手动使用账号池。`--` 之后的参数原样传给 agy。`--model <id>` 也会传给 agy（只能给一次，写在 `--` 前后均可），并由它的模型家族决定哪些账号有额度；不给时使用默认模型的家族（`gemini-3.8-flash`）。`start --help` 输出用法以及各账号的邮箱和状态。
 
 agy 始终运行在**共享 home**（`~/.agy-crew/shared/home`）中，这个 HOME 不属于任何账号。每个池账号的对话都存在它自己的 HOME 里，所以在一个账号下开的对话无法在另一个账号下恢复；共享 home 里的对话则不论由哪个账号出借凭据都留在原处，每次会话里 `/resume` 和 `agy --continue` 都能找到。各账号自己的 HOME 留给后台任务，它们需要靠各自的 HOME 把并发任务隔开。
+
+**真正的 home。** 共享 home 对装在你自己 HOME 里的东西是不可见的：agy 从 `~/.gemini` 加载的插件和 hook（比如会自行安装到那里的第三方插件）在其中不生效。需要它们时让 agy 跑在真正的 HOME 里：单次用 `start --real-home`，想设为默认用 `accounts start-home real`（`--shared-home` 可改回，`accounts start-home shared` 复位）。此时池账号的凭据和 project id 会放进 `~/.gemini/antigravity-cli`，原来就在那里的令牌或 project id 会先挪到 `*.agy-crew.shared-backup`，最后一个会话退出时恢复；companion 被杀掉则在下一次加锁更新时恢复。你的 `settings.json` 不会被改动，也不会复制 live 权限。该选择在第一个会话启动时确定；加入已在运行的会话的 `start` 沿用它的 HOME。对话此时存在真正的 HOME 里，不在池中。
 
 **出借方。** 带账号名时由该账号出借凭据。账号必须存在、已启用、已登录，且没有任何租约或借用（`in use`）。该模型家族正在冷却不会拒绝，因为交互式会话可以切换模型；冷却信息会作为提示输出到标准错误。`--` 之前，账号名后面只能跟 `--model`。不带账号名时，companion 按为任务挑选出借方的规则挑一个对该家族有额度的空闲账号（已启用、已登录、没有租约、借用或持有，该家族没有冷却、配额快照也未耗尽；额度最多的优先，其次是最久未用的）；没有账号可以出借时，`start` 在启动 agy 之前就会拒绝，并列出各账号的状态。出借方的凭据和 Cloud Code 项目 ID 会复制进共享 home。agy 退出时，凭据（agy 可能已刷新过）放回该账号；如果它已变成另一个邮箱的凭据（例如在 agy 里重新登录过），则不放回。此后共享 home 不保留凭据，直到下一次会话。
 

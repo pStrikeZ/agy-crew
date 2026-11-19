@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { PRODUCT } from './identity.mjs';
 import { accountEnv } from './pool/env.mjs';
 import { accountDir, accountHome, accountSettingsPath, beginSharedFiles, loadPool, poolExists, poolPaths, settleShared,
-  sharedHome, tokenPath, updatePool, validateAccountName, PoolError } from './pool/state.mjs';
+  realHome, sharedHome, START_HOMES, startHomeMode, tokenPath, updatePool, validateAccountName, PoolError } from './pool/state.mjs';
 import { accountInLoan } from './pool/loans.mjs';
 import { activeCooldown, chooseLender, DEFAULT_PARALLEL, exhaustedSnapshot, findAccount, holdOn, parallelOf } from './pool/select.mjs';
 import { cooldownKey, modelFamily } from './pool/results.mjs';
@@ -328,6 +328,20 @@ function cmdParallel(opts) {
   out(`Account ${name}: at most ${n} concurrent agy-crew run(s).`);
 }
 
+const START_HOME_USAGE = `usage: accounts start-home [${START_HOMES.join('|')}]`;
+
+/** No argument prints the HOME `start` runs agy in; `shared` or `real` sets it. */
+function cmdStartHome(opts) {
+  const value = opts._[1];
+  if (value === undefined) {
+    const mode = startHomeMode(currentPool());
+    return out(`start runs agy in the ${mode} home (${mode === 'real' ? realHome() : sharedHome()}).`);
+  }
+  if (!START_HOMES.includes(value) || opts._.length > 2) throw new PoolError(START_HOME_USAGE);
+  updatePool((pool) => { pool.settings = { ...pool.settings, start_home: value }; });
+  out(`start now runs agy in the ${value} home (${value === 'real' ? realHome() : sharedHome()}).`);
+}
+
 const COOLDOWN_USAGE = 'usage: accounts cooldown clear <name> [--family <family>] | accounts cooldown record <name> --family <family> --retry-at <time>';
 
 function cmdCooldown(opts) {
@@ -417,16 +431,20 @@ function cmdHold(opts) {
   throw new PoolError(HOLD_USAGE);
 }
 
-const START_USAGE = 'usage: start [<name>] [--model <id>] [-- <agy args>...]';
+const START_USAGE = 'usage: start [<name>] [--model <id>] [--real-home|--shared-home] [-- <agy args>...]';
 
 /** What `start --help` prints: usage, the accounts and examples. */
 export function startHelp() {
   const pool = currentPool();
   const now = Date.now();
-  const lines = [`usage: ${PRODUCT} start [<name>] [--model <id>] [-- <agy args>...]`,
+  const mode = startHomeMode(pool);
+  const lines = [`usage: ${PRODUCT} start [<name>] [--model <id>] [--real-home|--shared-home] [-- <agy args>...]`,
     'Runs agy interactively in this directory, holding the account it uses until agy exits.',
-    `agy runs in the shared home (${sharedHome()}), which belongs to no account:`,
+    `By default agy runs in the shared home (${sharedHome()}), which belongs to no account:`,
     'its conversations stay there whichever account lends the credential, so /resume finds them.',
+    `--real-home runs it in your own HOME (${realHome()}) instead, so plugins and settings installed there`,
+    'apply; the credential there is put aside and restored when agy exits. --shared-home forces the default.',
+    `Current default: ${mode} (change it with \`${PRODUCT} accounts start-home <shared|real>\`).`,
     '<name> lends its credential; without it, an idle account with quota for --model',
     '(default: the family of the default model) does. A start while a shared session runs',
     'joins it on the same credential.',
@@ -455,11 +473,15 @@ export function parseStartArgs(rest) {
   const split = rest.indexOf('--');
   const own = split < 0 ? rest : rest.slice(0, split);
   let agyArgs = split < 0 ? [] : rest.slice(split + 1);
-  let name = null, model = null, help = false;
+  let name = null, model = null, help = false, home = null;
   for (let i = 0; i < own.length; i++) {
     const a = own[i];
     if (a === '--help' || a === '-h') help = true;
-    else if (a === '--model') {
+    else if (a === '--real-home' || a === '--shared-home') {
+      const wanted = a === '--real-home' ? 'real' : 'shared';
+      if (home && home !== wanted) throw new PoolError('give either --real-home or --shared-home, not both');
+      home = wanted;
+    } else if (a === '--model') {
       model = own[++i];
       if (!model || model.startsWith('-')) throw new PoolError('flag --model needs a value');
     } else if (a.startsWith('--model=')) model = a.slice('--model='.length);
@@ -471,16 +493,16 @@ export function parseStartArgs(rest) {
     if (agyModelArg(agyArgs)) throw new PoolError('give --model once: either before -- or in agy\'s arguments');
     agyArgs = ['--model', model, ...agyArgs];
   }
-  return { name, model: model || agyModelArg(agyArgs), agyArgs, help };
+  return { name, model: model || agyModelArg(agyArgs), agyArgs, help, home };
 }
 
 /** `start`: resolves to agy's exit code.
  *  deps: { agyCommand, liveSettings, defaultModel }. */
 export async function cmdStart(rest, deps) {
-  const { name, model, agyArgs, help } = parseStartArgs(rest);
+  const { name, model, agyArgs, help, home } = parseStartArgs(rest);
   if (help) { out(startHelp()); return 0; }
   const family = modelFamily(model || deps.defaultModel);
-  return startShared(name, family, agyArgs, deps);
+  return startShared(name, family, agyArgs, deps, home);
 }
 
 const holdRecord = (account, extra = {}) =>
@@ -534,7 +556,7 @@ function joinRefusal(pool, wanted, cooling) {
  *  its token is never swapped by a loan meanwhile. A start while a shared
  *  session runs joins it on the same credential, since the HOME has room for
  *  only one; the credential goes back when the last of them exits. */
-async function startShared(wanted, family, agyArgs, deps) {
+async function startShared(wanted, family, agyArgs, deps, homeFlag = null) {
   const outcome = updatePool((pool) => {
     if (!pool.accounts.length) return { refused: `No pool accounts yet. Add one with \`${PRODUCT} accounts login <name>\`` };
     const now = Date.now();
@@ -556,23 +578,26 @@ async function startShared(wanted, family, agyArgs, deps) {
       if (!name) return { refused: noLenderMessage(pool, family, now) };
     }
     const account = findAccount(pool, name);
+    let sessionHome = pool.shared?.home || sharedHome();
     if (!joined) {
-      beginSharedFiles(name);
-      pool.shared = { account: name, email: account.email || null, started_at: new Date(now).toISOString() };
+      sessionHome = (homeFlag || startHomeMode(pool)) === 'real' ? realHome() : sharedHome();
+      const backups = beginSharedFiles(name, sessionHome);
+      pool.shared = { account: name, email: account.email || null, started_at: new Date(now).toISOString(),
+        ...(backups.length ? { home: sessionHome, backups } : {}) };
     }
     const hold = holdRecord(name, { shared: true });
     pool.leases.push(hold);
     account.last_used_at = hold.started_at;
-    return { hold, name, email: account.email, joined, cooling: wanted ? noQuota(pool, name, family, now) : null };
+    return { hold, name, email: account.email, joined, sessionHome, cooling: wanted ? noQuota(pool, name, family, now) : null };
   });
   if (outcome.refused) throw new PoolError(outcome.refused);
-  const { hold, name, email, joined, cooling } = outcome;
-  const home = sharedHome();
-  seedSettings(home, deps.liveSettings);
+  const { hold, name, email, joined, cooling, sessionHome: home } = outcome;
+  const real = home !== sharedHome();
+  if (!real) seedSettings(home, deps.liveSettings);
   const who = `account ${name}${email ? ` <${email}>` : ''}`;
   process.stderr.write(joined
     ? `${PRODUCT}: joining the running shared session, which uses ${who}\n`
-    : `${PRODUCT}: shared home, credential from ${who}\n`);
+    : `${PRODUCT}: ${real ? `real home (${home})` : 'shared home'}, credential from ${who}\n`);
   if (cooling) process.stderr.write(`${PRODUCT}: note: account ${name} has no ${cooling.family} quota until ${cooling.retry_at}\n`);
   return runInteractive(home, agyArgs, deps,
     () => updatePool((pool) => { pool.leases = pool.leases.filter((l) => l.id !== hold.id); settleShared(pool); }));
@@ -692,14 +717,15 @@ export async function cmdAccounts(opts, deps) {
     case 'enable': return cmdToggle(opts, false);
     case 'disable': return cmdToggle(opts, true);
     case 'parallel': return cmdParallel(opts);
+    case 'start-home': return cmdStartHome(opts);
     case 'cooldown': return cmdCooldown(opts);
     case 'hold': return cmdHold(opts);
     case 'quota': return cmdQuota(opts, deps);
     default:
-      throw new PoolError('usage: accounts <list|login|import|remove|rename|refresh-email|enable|disable|parallel|cooldown|hold|quota> ...\n' +
+      throw new PoolError('usage: accounts <list|login|import|remove|rename|refresh-email|enable|disable|parallel|start-home|cooldown|hold|quota> ...\n' +
         '  accounts list [--json]\n  accounts login <name>\n  accounts import <name> --home <dir>\n' +
         '  accounts remove <name> [--yes]\n  accounts rename <old> <new>\n  accounts refresh-email [<name>...] [--json]\n  accounts enable|disable <name>\n' +
-        '  accounts parallel <name> [<n>]\n' +
+        '  accounts parallel <name> [<n>]\n  accounts start-home [shared|real]\n' +
         '  accounts cooldown clear <name> [--family <f>]\n  accounts cooldown record <name> --family <f> --retry-at <time>\n' +
         '  accounts hold acquire <name> --pid <pid> [--family <f>] [--json]\n  accounts hold release <id> [--json]\n' +
         '  accounts quota [<name>...] [--refresh] [--json]');

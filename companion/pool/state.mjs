@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { PRODUCT, globalHome } from '../identity.mjs';
 import { withStateLock, replaceFile } from '../state-lock.mjs';
@@ -34,8 +35,14 @@ export const projectCachePath = (home) => path.join(home, '.gemini', 'antigravit
 /** The HOME of `start` without an account name: it belongs to no account, so
  *  its conversations survive switching credentials. */
 export const sharedHome = () => path.join(poolPaths().root, 'shared', 'home');
+/** The user's own HOME, for `start` when the pool setting `start_home` is `real`. */
+export const realHome = () => os.homedir();
+export const START_HOMES = ['shared', 'real'];
+/** Which HOME `start` runs agy in: the pool setting, `shared` by default. */
+export const startHomeMode = (pool) => (START_HOMES.includes(pool.settings?.start_home) ? pool.settings.start_home : 'shared');
+export const SHARED_BACKUP_SUFFIX = '.agy-crew.shared-backup';
 
-export const emptyPool = () => ({ schema: POOL_SCHEMA, accounts: [], cooldowns: {}, leases: [], conversations: {}, loans: [], quota: {}, shared: null });
+export const emptyPool = () => ({ schema: POOL_SCHEMA, accounts: [], cooldowns: {}, leases: [], conversations: {}, loans: [], quota: {}, shared: null, settings: {} });
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 
@@ -88,26 +95,48 @@ export function restoreLoanFiles(loan) {
  *  account's Cloud Code project. Everything else in the shared HOME stays. */
 const SHARED_FILES = [tokenPath, projectCachePath];
 
-/** Put an account's credential into the shared HOME. Called inside updatePool. */
-export function beginSharedFiles(account) {
-  for (const file of SHARED_FILES) {
-    const from = file(accountHome(account)), to = file(sharedHome());
-    fs.mkdirSync(path.dirname(to), { recursive: true });
-    if (fs.existsSync(from)) copyAtomic(from, to); else fs.rmSync(to, { force: true });
+/** Put an account's credential into the HOME of a shared session and return
+ *  the backups to record in `pool.shared`. The shared HOME is ours; the user's
+ *  real HOME may hold a login of its own, so what is there is moved aside and
+ *  comes back when the session settles. Called inside updatePool. */
+export function beginSharedFiles(account, home = sharedHome()) {
+  const real = home !== sharedHome();
+  const targets = SHARED_FILES.map((file) => file(home));
+  if (real) {
+    const stale = targets.find((to) => fs.existsSync(to + SHARED_BACKUP_SUFFIX));
+    if (stale) throw new PoolError(`a backup already exists: ${stale}${SHARED_BACKUP_SUFFIX}; resolve it before starting in the real home`);
   }
+  const backups = [];
+  SHARED_FILES.forEach((file, i) => {
+    const from = file(accountHome(account)), to = targets[i];
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (real) {
+      const existed = fs.existsSync(to);
+      if (existed) replaceFile(to, to + SHARED_BACKUP_SUFFIX);
+      backups.push({ file: to, existed });
+    }
+    if (fs.existsSync(from)) copyAtomic(from, to); else fs.rmSync(to, { force: true });
+  });
+  return backups;
 }
 
 /** End the shared session once its last holder is gone: the credential goes
  *  back to its account (agy may have refreshed it), unless it is no longer that
- *  account's (someone signed in to another one inside agy), and the shared HOME
- *  is left without a credential. Idempotent. */
+ *  account's (someone signed in to another one inside agy), and the session's
+ *  HOME is left without a credential; a real HOME gets its own files back.
+ *  Idempotent. */
 export function settleShared(pool) {
   if (!pool.shared || pool.leases.some((l) => l.shared)) return;
   const { account, email } = pool.shared;
-  const ts = tokenPath(sharedHome()), ta = tokenPath(accountHome(account));
-  const token = readToken(sharedHome());
+  const home = pool.shared.home || sharedHome();
+  const ts = tokenPath(home), ta = tokenPath(accountHome(account));
+  const token = readToken(home);
   if (token && (!email || token.email === email) && fs.existsSync(path.dirname(ta))) copyAtomic(ts, ta);
   fs.rmSync(ts, { force: true });
+  for (const { file, existed } of pool.shared.backups || []) {
+    fs.rmSync(file, { force: true });
+    if (existed && fs.existsSync(file + SHARED_BACKUP_SUFFIX)) replaceFile(file + SHARED_BACKUP_SUFFIX, file);
+  }
   pool.shared = null;
 }
 

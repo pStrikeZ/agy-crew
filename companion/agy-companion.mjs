@@ -2184,9 +2184,11 @@ Jobs
   .agy-crew/); --here limits it to the current one
 
 Accounts
-  start [<name>] [--model <id>] [-- <agy args>]
+  start [<name>] [--model <id>] [--real-home|--shared-home] [-- <agy args>]
                                             interactive agy in this directory, in the shared
-                                            home whose conversations survive account switches,
+                                            home whose conversations survive account switches
+                                            (or your real HOME: --real-home, or \`accounts
+                                            start-home real\` as the default),
                                             with the credential of <name>, or of an idle account
                                             that has quota for --model. The account is held
                                             until agy exits
@@ -2201,6 +2203,7 @@ Accounts
   accounts enable|disable <name>            include in or exclude from selection
   accounts parallel <name> [<n>]            concurrent runs allowed on one account
                                             (default 1)
+  accounts start-home [shared|real]         which HOME \`start\` runs agy in (default shared)
   accounts remove <name> [--yes]            delete an account
   accounts rename <old> <new>               rename an idle account, keeping its state
   accounts refresh-email [<name>...] [--json]
