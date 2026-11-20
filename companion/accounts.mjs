@@ -627,7 +627,7 @@ async function runInteractive(home, agyArgs, { agyCommand }, release) {
   }
 }
 
-const STAGE_LABELS = { start: 'reading token', warmup: 'renewing token via agy', query: 'asking Cloud Code' };
+const STAGE_LABELS = { start: 'reading token', query: 'asking agy /usage' };
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
 const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
 

@@ -41,6 +41,12 @@
  *                            omits the conversation id, and
  *                            FAKE_AGY_UNAVAILABLE_WRITE=<name> first creates
  *                            that file in the cwd, as if agy had edited
+ *   FAKE_AGY_USAGE           `-p /usage` answer: a JSON array of usage groups, or
+ *                            {"by_email": {"<email>": [...groups]}} to answer per
+ *                            account (default: one gemini group at 75%/50%);
+ *                            FAKE_AGY_USAGE_AUTH_FAIL=1 answers like a signed-out
+ *                            agy, FAKE_AGY_USAGE_KEYRING=1 skips the file-token
+ *                            marker in the --log-file
  *   FAKE_AGY_REFRESH_TOKEN   mark the $HOME token as rewritten by this run
  *   FAKE_AGY_NEW_ACCESS_TOKEN  store this access_token in the $HOME token
  */
@@ -138,6 +144,24 @@ if (streaming && !process.env.FAKE_AGY_NO_JSON) {
   if (process.env.FAKE_AGY_EVENTS) {
     for (const event of JSON.parse(process.env.FAKE_AGY_EVENTS)) process.stdout.write(JSON.stringify(event) + '\n');
   }
+}
+
+const pIndex = argv.indexOf('-p');
+if (pIndex >= 0 && argv[pIndex + 1] === '/usage') {
+  const reply = (payload, code = 0) => { process.stdout.write(JSON.stringify(payload) + '\n'); process.exit(code); };
+  if (process.env.FAKE_AGY_USAGE_AUTH_FAIL === '1') {
+    process.stderr.write('Authentication required. Please visit the URL to log in:\n');
+    reply({ conversation_id: '', status: 'ERROR', response: '', error: 'authentication failed or timed out', duration_seconds: 0, num_turns: 0 }, 1);
+  }
+  if (logIndex >= 0 && process.env.FAKE_AGY_USAGE_KEYRING !== '1') fs.writeFileSync(argv[logIndex + 1], 'Using file-based token storage\n');
+  const bucket = (id, window, remaining_fraction, reset_time) => ({ id, name: id, window, remaining_fraction, reset_time });
+  let groups = [{ name: 'Gemini Models', description: 'Models within this group: Gemini 3.8 Flash', buckets: [
+    bucket('gemini-weekly', 'weekly', 0.5, '2031-01-07T00:00:00Z'), bucket('gemini-5h', '5h', 0.25, '2031-01-01T05:00:00Z')] }];
+  if (process.env.FAKE_AGY_USAGE) {
+    const given = JSON.parse(process.env.FAKE_AGY_USAGE);
+    groups = Array.isArray(given) ? given : given.by_email[tokenEmail()] || groups;
+  }
+  reply({ conversation_id: '', status: 'SUCCESS', response: '', duration_seconds: 0, num_turns: 0, command: { name: 'usage', data: { description: 'fake', groups } } });
 }
 
 if (process.env.FAKE_AGY_CHILD_PID_FILE) {

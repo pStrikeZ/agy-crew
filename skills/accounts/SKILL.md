@@ -27,7 +27,7 @@ node "<skill-dir>/../../companion/agy-companion.mjs" accounts <subcommand> [args
 | Command | Purpose |
 | --- | --- |
 | `accounts list [--json]` | Aligned tables: each account with email, state and last use (plus a line for live), then a `QUOTA` table (per pool: remaining percent and reset time for the 5h and weekly windows, and how old the snapshot is), then `COOLDOWNS` when any are active. Start here. |
-| `accounts quota [<name>...] [--refresh] [--json]` | The same `QUOTA` table and `COOLDOWNS` section, from cached snapshots. `--refresh` queries Google's Cloud Code service and updates the snapshots; it is the only subcommand that uses the network. |
+| `accounts quota [<name>...] [--refresh] [--json]` | The same `QUOTA` table and `COOLDOWNS` section, from cached snapshots. `--refresh` runs `agy -p /usage` once per account and updates the snapshots; it is the only subcommand that uses the network. |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json`) from an existing HOME-shaped directory, for example an agy-cli-manager account. |
 | `accounts enable <name>` / `accounts disable <name>` | Put an account into or out of automatic selection. |
 | `accounts start-home [shared\|real]` | Which HOME `start` uses by default (unset means `shared`). `real` puts the account's credential into the user's `~/.gemini` for the session and restores what was there. Change it only when the user asks. |

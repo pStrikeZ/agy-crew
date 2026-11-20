@@ -280,12 +280,12 @@ test('a held account is never picked or lent, refuses --account, and lends its c
 
 test('parseQuotaSummary maps groups to pools and windows', () => {
   const pools = parseQuotaSummary({ groups: [
-    { displayName: 'Gemini', buckets: [
-      { id: 'gemini-x-5h', window: '5h', remainingFraction: 0.5, resetTime: '2030-01-01T00:00:00Z' },
-      { id: 'gemini-x-w', window: 'weekly', resetTime: '2030-01-02T00:00:00Z' },
-      { id: 'gemini-x-d', window: 'daily', remainingFraction: 1 }] },
-    { description: 'Claude and GPT models', buckets: [{ id: 'misc', window: '5h', remainingFraction: 0.1 }] },
-    { displayName: 'Unrelated', buckets: [{ id: 'q', window: '5h', remainingFraction: 1 }] },
+    { name: 'Gemini Models', buckets: [
+      { id: 'gemini-5h', window: '5h', remaining_fraction: 0.5, reset_time: '2030-01-01T00:00:00Z' },
+      { id: 'gemini-weekly', window: 'weekly', reset_time: '2030-01-02T00:00:00Z' },
+      { id: 'gemini-x-d', window: 'daily', remaining_fraction: 1 }] },
+    { name: 'Claude and GPT models', buckets: [{ id: 'misc', window: '5h', remaining_fraction: 0.1 }] },
+    { name: 'Unrelated', buckets: [{ id: 'q', window: '5h', remaining_fraction: 1 }] },
   ] });
   assert.deepEqual(pools.gemini.short, { remaining: 0.5, reset_at: '2030-01-01T00:00:00.000Z' });
   assert.equal(pools.gemini.weekly.remaining, 0); // proto3 JSON omits zero

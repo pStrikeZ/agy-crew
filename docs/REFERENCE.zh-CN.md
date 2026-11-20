@@ -263,7 +263,7 @@ review --prompt "Review the patch at /tmp/change.patch"
 | `accounts list [--json]` | 以对齐的纯文本表格显示。先是名称、邮箱、状态（`ready`、`busy n`、`held`、`cooling`、`needs login`、`disabled`）和相对形式的最近使用时间（`9m ago`、`never`），以及 `PARALLEL` 列（该账号的并发运行上限），并附一行 `live`（`your own agy login, never pooled`）。随后是 `QUOTA` 表：按账号和配额池（`gemini`、`other`，其余按字母序）显示 5h 与每周窗口的剩余百分比和重置时间（`99%  resets in 4h12m (15:23)`；重置不在今天时为 `MM-DD HH:MM`，缓存的重置时间已过时为 `reset since refresh`），以及快照的时效（`AS OF`）；没有快照的账号显示 `not refreshed`，刷新失败的显示 `error: ...`。最后是 `COOLDOWNS` 部分，列出每个生效的冷却的家族和 `until <time> (in <duration>)`，没有冷却时省略。`--json` 额外给出每个账号的 `parallel` 上限 |
 | `accounts login <name>` | 交互式登录：添加新账号，或为已有账号重新登录。见[登录](#登录) |
 | `accounts import <name> --home <dir>` | 从已有的 HOME 形态目录复制令牌（存在时一并复制 `settings.json`），例如 agy-cli-manager 的账号目录（`~/.agy-cli-manager/accounts/<name>`）。邮箱和重复检查与登录相同；不接受 live 自己的 HOME |
-| `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先向 Google 的 Cloud Code 服务查询。见[配额快照](#配额快照) |
+| `accounts quota [<name>...] [--refresh] [--json]` | 按缓存的快照显示上述 `QUOTA` 表和 `COOLDOWNS` 部分（默认所有账号，也可指定名称）。加上 `--refresh` 会先让 agy 查询（`agy -p /usage`）。见[配额快照](#配额快照) |
 | `accounts enable <name>` / `accounts disable <name>` | 让账号加入或退出自动选择。已停用的账号也不会借出凭据 |
 | `accounts start-home [shared\|real]` | `start` 在哪个 HOME 里运行 agy。不带参数时显示当前值，未设置视为 `shared`。`start --real-home` / `--shared-home` 可对单次会话覆盖 |
 | `accounts parallel <name> [<n>]` | 一个账号同时可以被多少个由 agent（skill）发起的任务持有。不带 `<n>` 时显示当前上限；带上时设为 1–64，未设置视为 1。修改不要求账号空闲，也不会改动令牌。交互式 `start`/`omp` 仍独占账号；凭据处于借用中时该上限不生效 |
@@ -367,14 +367,14 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
 
 ### 配额快照
 
-不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会逐个账号向 Google 的 Cloud Code 服务查询（从不并发，避免同一台机器同时查询多个 Google 账号）：
+不带 `--refresh` 的 `accounts quota` 只显示缓存内容和当前的冷却。带上 `--refresh` 时，会逐个账号让 agy 自己去查（从不并发，避免同一台机器同时查询多个 Google 账号）。账号池不会直接连 Google：
 
-1. 读取令牌。若访问令牌缺失，或将在 120 秒内过期，就用该账号的环境运行 `agy -p "reply with one word: pong" --output-format json` 预热（超时 60 秒），然后重新读取。
-2. 调用 `loadCodeAssist` 获取项目和套餐类型（失败时使用缓存的 `home/.gemini/antigravity-cli/cache/default_project_id.txt`），再调用 `retrieveUserQuotaSummary`。每个请求的超时为 20 秒。请求使用与 agy 自身相同的 User-Agent：`antigravity/cli/<版本> (aidev_client; os_type=<系统>; arch=<架构>)`，版本取自 `agy --version`；换成其他客户端标识时，Cloud Code 不会在汇总里返回 Gemini 分组。
-3. 把配额分组解析到 `gemini` 和 `other` 两个池，每个池各有短窗口（5h）和每周窗口，记录剩余比例和重置时间。
-4. 遇到 `401` 时先预热并重试一次；仍然失败就记录错误，并把该账号标记为 `needs login`。
+1. 读取令牌；没有访问令牌的账号直接记为错误，不会运行 agy。
+2. 用该账号的环境运行 `agy -p /usage --output-format json --log-file <账号目录>/usage.log`，工作目录为它的 home（超时 20 秒）。令牌快过期时由 agy 自己续期并向服务商查询。只有日志里出现 `Using file-based token storage` 才采信这份报告；否则 agy 可能读了各 HOME 共用的系统钥匙串，那里可能是别的账号的凭据。
+3. 把 `command.data.groups` 解析到 `gemini` 和 `other` 两个池（先看桶 ID 前缀 `gemini-` / `3p-`，再看分组名称），每个池各有短窗口（5h）和每周窗口，记录剩余比例和重置时间。不再记录套餐类型。
+4. agy 报告需要认证时（未登录的账号会等浏览器登录，直到超时被终止）记录错误，并把该账号标记为 `needs login`。
 
-进度输出到标准错误，标准输出只保留表格或 JSON：先是一行标题，之后每个账号一行 `✓ <name> (<秒数>)` 或 `✗ <name> (<秒数>): <错误>`。在终端中还会有一行实时状态，显示正在刷新的账号、正在等待的步骤（`reading token`、`renewing token via agy`、`asking Cloud Code`）以及已等待的时间。带 `--json` 且标准错误不是终端时，那里不输出任何内容。
+进度输出到标准错误，标准输出只保留表格或 JSON：先是一行标题，之后每个账号一行 `✓ <name> (<秒数>)` 或 `✗ <name> (<秒数>): <错误>`。在终端中还会有一行实时状态，显示正在刷新的账号、正在等待的步骤（`reading token`、`asking agy /usage`）以及已等待的时间。带 `--json` 且标准错误不是终端时，那里不输出任何内容。
 
 如果刷新后某个配额池的剩余量大于 0，该账号在此池内各模型家族的冷却会被清除。令牌不会被打印。**只有 `accounts quota --refresh` 会访问网络**，任务分发期间从不联网。
 
@@ -386,7 +386,6 @@ agy 运行期间，出借方的持有方式与以 companion 自身 pid 执行 `a
 | --- | --- |
 | `AGY_CREW_ACCOUNT` | `--account` 的默认值（`auto`、`live` 或账号名） |
 | `AGY_CREW_HOME` | 移动全局目录 `~/.agy-crew/`，其中包括账号池及各账号 |
-| `AGY_CREW_CLOUDCODE_URL` | 替换 `accounts quota --refresh` 使用的默认地址 `https://cloudcode-pa.googleapis.com`（用于测试或代理） |
 | `AGY_CREW_NO_UPDATE_CHECK` | 设为 `1` 可关闭交互式 `start` / 全屏 `inspect` 的每日 npm 更新检查 |
 
 ### 状态目录

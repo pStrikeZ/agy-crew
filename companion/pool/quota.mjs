@@ -1,31 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { accountEnv } from './env.mjs';
-import { accountHome, projectCachePath as projectCache, updatePool } from './state.mjs';
+import { accountDir, accountHome, updatePool } from './state.mjs';
 import { quotaPool } from './results.mjs';
 import { readToken } from './token.mjs';
-
-const baseUrl = () => process.env.AGY_CREW_CLOUDCODE_URL || 'https://cloudcode-pa.googleapis.com';
-const WARM_UP_MS = 120_000;
-// Cloud Code leaves the Gemini group out of retrieveUserQuotaSummary unless the
-// User-Agent names a recent agy CLI (`antigravity/cli/<version> (...)`, as agy
-// itself sends); a bare `antigravity` gets only the Claude/GPT group. Used when
-// `agy --version` cannot be read.
-const FALLBACK_AGY_VERSION = '1.4.9';
-const AGY_ARCH = { x64: 'amd64', arm64: 'arm64', ia32: '386' };
-const AGY_OS = { win32: 'windows' };
-
-/** The User-Agent agy sends, built from the installed agy's version. */
-export function clientUserAgent(agyCommand, { platform = process.platform, arch = process.arch } = {}) {
-  let version = null;
-  try {
-    const agy = agyCommand(['--version']);
-    const r = spawnSync(agy.cmd, agy.args, { encoding: 'utf8', timeout: 15_000, windowsHide: true });
-    version = r.status === 0 ? /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0] || null : null;
-  } catch { /* fall back below */ }
-  return `antigravity/cli/${version || FALLBACK_AGY_VERSION} (aidev_client; os_type=${AGY_OS[platform] || platform}; arch=${AGY_ARCH[arch] || arch})`;
-}
 
 const WARM_UP_TIMEOUT_MS = 30_000;
 const WARM_UP_POLL_MS = 100;
@@ -73,97 +52,115 @@ export async function warmUp(home, agyCommand) {
   });
 }
 
-async function post(endpoint, accessToken, body, userAgent) {
-  const response = await fetch(`${baseUrl()}/v1internal:${endpoint}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'User-Agent': userAgent },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20_000),
-  });
-  let json = null;
-  try { json = await response.json(); } catch { /* non-JSON error body */ }
-  return { status: response.status, json };
-}
+const bucketId = (b) => b.id || b.name || '';
 
-const bucketId = (b) => b.id || b.bucketId || b.quotaBucketId || b.name || '';
-
-/** Quota pool of one Cloud Code group: bucket id prefixes first, then its labels. */
+/** Quota pool of one agy usage group: bucket id prefixes first, then its labels. */
 function groupPool(group, buckets) {
   for (const b of buckets) {
     const id = String(bucketId(b));
     if (id.startsWith('gemini-')) return 'gemini';
     if (id.startsWith('3p-')) return 'other';
   }
-  const label = `${group.displayName || ''} ${group.description || ''}`.toLowerCase();
+  const label = `${group.name || ''} ${group.description || ''}`.toLowerCase();
   if (label.includes('gemini')) return 'gemini';
   if (/claude|gpt/.test(label)) return 'other';
   return null;
 }
 
-export function parseQuotaSummary(json) {
+/** Pools from the `groups` of `agy -p /usage`: { gemini|other: { short|weekly: { remaining, reset_at } } }. */
+export function parseQuotaSummary(data) {
   const pools = {};
-  for (const group of json?.groups || []) {
-    const buckets = group.buckets || group.quotaBuckets || [];
+  for (const group of data?.groups || []) {
+    const buckets = group.buckets || [];
     const name = groupPool(group, buckets);
     if (!name) continue;
     for (const b of buckets) {
-      const window = String(b.window || b.windowType || b.period || '').toLowerCase();
+      const window = String(b.window || '').toLowerCase();
       const key = window === '5h' ? 'short' : window === 'weekly' ? 'weekly' : null;
       if (!key) continue;
       // proto3 JSON omits a zero fraction, so a bucket with a reset time but no fraction is empty
-      const remaining = typeof b.remainingFraction === 'number' ? b.remainingFraction : b.resetTime ? 0 : null;
+      const remaining = typeof b.remaining_fraction === 'number' ? b.remaining_fraction : b.reset_time ? 0 : null;
       if (remaining === null) continue;
-      (pools[name] ||= {})[key] = { remaining, reset_at: b.resetTime ? new Date(b.resetTime).toISOString() : null };
+      (pools[name] ||= {})[key] = { remaining, reset_at: b.reset_time ? new Date(b.reset_time).toISOString() : null };
     }
   }
   return pools;
 }
 
-async function queryCloudCode(home, accessToken, userAgent) {
-  const meta = { metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } };
-  const load = await post('loadCodeAssist', accessToken, meta, userAgent);
-  if (load.status === 401) return { status: 401 };
-  if (load.status >= 400) return { status: load.status, error: `loadCodeAssist HTTP ${load.status}` };
-  let project = load.json?.cloudaicompanionProject;
-  project = typeof project === 'string' ? project : project?.id;
-  if (project) {
-    try { fs.mkdirSync(path.dirname(projectCache(home)), { recursive: true }); fs.writeFileSync(projectCache(home), project); } catch {}
-  } else {
-    try { project = fs.readFileSync(projectCache(home), 'utf8').trim(); } catch {}
+const USAGE_TIMEOUT_MS = 20_000; // a signed-out agy would wait a minute for a browser login
+const USAGE_OUTPUT_LIMIT = 64 * 1024;
+
+class UsageError extends Error {
+  constructor(message, { authFailed = false } = {}) {
+    super(message);
+    this.authFailed = authFailed;
   }
-  if (!project) return { status: 200, error: 'no Cloud Code project id available' };
-  const summary = await post('retrieveUserQuotaSummary', accessToken, { project }, userAgent);
-  if (summary.status === 401) return { status: 401 };
-  if (summary.status >= 400) return { status: summary.status, error: `retrieveUserQuotaSummary HTTP ${summary.status}` };
-  return { status: 200, plan_type: load.json?.planInfo?.planType || null, pools: parseQuotaSummary(summary.json) };
 }
 
-const needsWarmUp = (tok) => !tok?.access_token || (tok.expiry_ms !== null && tok.expiry_ms - Date.now() < WARM_UP_MS);
+const AUTH_REQUIRED = /Authentication required|authentication (?:failed|interrupted)/i;
 
-/** Query Cloud Code for one account. Never throws, never prints tokens.
- *  onStage('warmup' | 'query') reports what it is waiting on. */
-export async function fetchSnapshot(name, { agyCommand, userAgent = clientUserAgent(agyCommand) }, onStage = () => {}) {
+/** Run `agy -p /usage --output-format json` with the account's HOME. agy reads
+ *  the quota itself (renewing the token if it must), so the pool never talks to
+ *  the provider directly. Resolves to the parsed print-mode payload. */
+function runUsage(name, agyCommand) {
   const home = accountHome(name);
-  const snapshot = { refreshed_at: new Date().toISOString(), plan_type: null, pools: {}, error: null };
+  const logFile = path.join(accountDir(name), 'usage.log');
+  try { fs.rmSync(logFile, { force: true }); } catch { /* best effort */ }
+  const agy = agyCommand(['-p', '/usage', '--output-format', 'json', '--log-file', logFile]);
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let child = null;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try { child?.kill(); } catch { /* already gone */ }
+      fn(value);
+    };
+    const failure = (message) => new UsageError(message, { authFailed: AUTH_REQUIRED.test(`${stdout}\n${stderr}`) });
+    const deadline = setTimeout(() => finish(reject, failure(`agy /usage did not answer within ${USAGE_TIMEOUT_MS / 1000}s`)), USAGE_TIMEOUT_MS);
+    try {
+      child = spawn(agy.cmd, agy.args, { cwd: home, env: accountEnv(home), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    } catch (error) {
+      finish(reject, new UsageError(`failed to launch agy: ${error.message}`));
+      return;
+    }
+    child.stdout.on('data', (c) => { if (stdout.length < USAGE_OUTPUT_LIMIT) stdout += c; });
+    child.stderr.on('data', (c) => { if (stderr.length < USAGE_OUTPUT_LIMIT) stderr += c; });
+    child.on('error', (error) => finish(reject, new UsageError(`failed to launch agy: ${error.message}`)));
+    child.on('close', (code) => {
+      let print = null;
+      try { print = JSON.parse(stdout.trim()); } catch { /* not JSON */ }
+      const groups = print?.command?.data?.groups;
+      if (print?.status === 'SUCCESS' && Array.isArray(groups)) {
+        // Without file-backed storage agy would read the OS keyring, shared by
+        // every HOME, and report some other account's quota.
+        let log = '';
+        try { log = fs.readFileSync(logFile, 'utf8'); } catch { /* checked below */ }
+        if (!log.includes('Using file-based token storage')) {
+          finish(reject, new UsageError('agy did not use file-based token storage'));
+        } else finish(resolve, { groups });
+        return;
+      }
+      const reason = print?.error || (print ? `agy /usage reported ${print.status}` : `agy /usage exited with ${code} without a readable report`);
+      finish(reject, failure(String(reason)));
+    });
+  });
+}
+
+/** Ask agy for one account's quota. Never throws, never prints tokens.
+ *  onStage('query') reports what it is waiting on. */
+export async function fetchSnapshot(name, { agyCommand }, onStage = () => {}) {
+  const snapshot = { refreshed_at: new Date().toISOString(), pools: {}, error: null };
   let authFailed = false;
   try {
-    let tok = readToken(home);
-    if (needsWarmUp(tok)) { onStage('warmup'); await warmUp(home, agyCommand); tok = readToken(home); }
-    if (!tok?.access_token) throw new Error('no access token (run `accounts login`)');
+    if (!readToken(accountHome(name))?.access_token) throw new UsageError('no access token (run `accounts login`)');
     onStage('query');
-    let result = await queryCloudCode(home, tok.access_token, userAgent);
-    if (result.status === 401) {
-      onStage('warmup');
-      await warmUp(home, agyCommand);
-      onStage('query');
-      tok = readToken(home);
-      result = tok?.access_token ? await queryCloudCode(home, tok.access_token, userAgent) : { status: 401 };
-      if (result.status === 401) { authFailed = true; throw new Error('Cloud Code rejected the credential (HTTP 401)'); }
-    }
-    if (result.error) throw new Error(result.error);
-    snapshot.plan_type = result.plan_type;
-    snapshot.pools = result.pools;
+    snapshot.pools = parseQuotaSummary(await runUsage(name, agyCommand));
   } catch (error) {
+    authFailed = Boolean(error.authFailed);
     snapshot.error = String(error.message || error).slice(0, 300);
   }
   return { snapshot, authFailed };
@@ -178,11 +175,10 @@ const loanBorrowers = () => updatePool((pool) => new Set(pool.loans.map((l) => l
  *  update. A pool with quota left clears that account's cooldowns for its
  *  families. An account whose credential is on loan is skipped and keeps its
  *  last snapshot: its token file holds the lender's credential, so asking
- *  Cloud Code would store the lender's quota under the borrower's name.
+ *  agy would store the lender's quota under the borrower's name.
  *  progress: { stage(name, stage), done(name, snapshot), skip(name, reason) }. */
 export async function refreshQuotas(names, deps, progress = {}) {
   const fetched = [];
-  if (names.length) deps = { ...deps, userAgent: clientUserAgent(deps.agyCommand) };
   const onLoan = loanBorrowers();
   for (const name of names) {
     if (onLoan.has(name)) { progress.skip?.(name, 'credential on loan to a running job'); continue; }

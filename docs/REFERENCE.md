@@ -213,7 +213,7 @@ Every agy process for a pool account runs with its own HOME (and `USERPROFILE` o
 | `accounts list [--json]` | Aligned plain-text tables. First, name, email, state (`ready`, `busy n`, `held`, `cooling`, `needs login`, `disabled`) and last use as a relative time (`9m ago`, `never`), plus a `PARALLEL` column with the account's concurrent agent-run limit, plus a `live` row (`your own agy login, never pooled`). Then a `QUOTA` table with, per account and quota pool (`gemini`, `other`, then any others), the remaining percent and reset time of the 5h and weekly windows (`99%  resets in 4h12m (15:23)`; `MM-DD HH:MM` when the reset is not today, `reset since refresh` when the cached reset time has passed) and the age of the snapshot (`AS OF`); accounts without a snapshot show `not refreshed`, failed refreshes `error: ...`. Finally a `COOLDOWNS` section listing each active cooldown's family and `until <time> (in <duration>)`, omitted when there are none. `--json` adds each account's `parallel` limit |
 | `accounts login <name>` | Interactive sign-in for a new account, or a re-login of an existing one. See [Login](#login) |
 | `accounts import <name> --home <dir>` | Copy the token (and `settings.json` when present) from an existing HOME-shaped directory, such as an agy-cli-manager account directory (`~/.agy-cli-manager/accounts/<name>`). Same email and duplicate checks as login. Refuses the live home |
-| `accounts quota [<name>...] [--refresh] [--json]` | Print the `QUOTA` table and `COOLDOWNS` section described above for the named accounts (all by default), from cached snapshots. With `--refresh`, query Google's Cloud Code service first. See [Quota snapshots](#quota-snapshots) |
+| `accounts quota [<name>...] [--refresh] [--json]` | Print the `QUOTA` table and `COOLDOWNS` section described above for the named accounts (all by default), from cached snapshots. With `--refresh`, ask agy (`agy -p /usage`) first. See [Quota snapshots](#quota-snapshots) |
 | `accounts enable <name>` / `accounts disable <name>` | Include or exclude an account from selection. Disabled accounts also never lend |
 | `accounts start-home [shared\|real]` | Which HOME `start` runs agy in. Without an argument, print the current one; unset means `shared`. `--real-home` / `--shared-home` on `start` override it for one session |
 | `accounts parallel <name> [<n>]` | How many agent-dispatched runs may hold one account at once. Without `<n>`, print the current limit. With `<n>`, set it (1–64); unset means 1. It does not require an idle account and does not touch its token. Interactive `start`/`omp` still hold the account exclusively, and a credential on loan ignores the limit |
@@ -317,14 +317,14 @@ The lender is held exactly as by `accounts hold acquire` with the companion's ow
 
 ### Quota snapshots
 
-`accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks Google's Cloud Code service, one account at a time (never in parallel, so several Google accounts are not queried from one machine at once):
+`accounts quota` without `--refresh` prints what is cached and the active cooldowns. With `--refresh` it asks agy itself, one account at a time (never in parallel, so several Google accounts are not queried from one machine at once). The pool never talks to Google directly:
 
-1. Read the token. If the access token is missing or expires within 120 seconds, warm up by running `agy -p "reply with one word: pong" --output-format json` with the account's environment (60 s timeout), then reread it.
-2. Call `loadCodeAssist` to learn the project and plan type (falling back to the cached `home/.gemini/antigravity-cli/cache/default_project_id.txt`), then `retrieveUserQuotaSummary`. Each request has a 20 s timeout. Requests carry the User-Agent agy itself sends, `antigravity/cli/<version> (aidev_client; os_type=<os>; arch=<arch>)`, with the version from `agy --version`: Cloud Code omits the Gemini group from the summary for any other client.
-3. Parse the quota groups into the `gemini` and `other` pools, each with a short (5h) and a weekly window: remaining fraction and reset time.
-4. On `401` the account is warmed up once and retried; if it still fails, the error is recorded and the account is marked `needs login`.
+1. Read the token; an account with no access token is reported as an error without running agy.
+2. Run `agy -p /usage --output-format json --log-file <account dir>/usage.log` with the account's environment and its home as the working directory (20 s timeout). agy renews an expiring token and queries the provider itself. The report is accepted only if the log shows `Using file-based token storage`; otherwise agy may have read the shared OS keyring, which could belong to another account.
+3. Parse `command.data.groups` into the `gemini` and `other` pools (by bucket id prefix `gemini-` / `3p-`, then by group name), each with a short (5h) and a weekly window: remaining fraction and reset time. The plan type is no longer recorded.
+4. If agy reports that authentication is required (a signed-out account waits for a browser login until the timeout kills it), the error is recorded and the account is marked `needs login`.
 
-Progress goes to stderr, so stdout keeps only the table or JSON: a header line, then one `✓ <name> (<seconds>)` or `✗ <name> (<seconds>): <error>` line per account. On a terminal a live line also shows the account being refreshed, what it is waiting on (`reading token`, `renewing token via agy`, `asking Cloud Code`) and for how long. With `--json` and stderr not a terminal, nothing is printed there.
+Progress goes to stderr, so stdout keeps only the table or JSON: a header line, then one `✓ <name> (<seconds>)` or `✗ <name> (<seconds>): <error>` line per account. On a terminal a live line also shows the account being refreshed, what it is waiting on (`reading token`, `asking agy /usage`) and for how long. With `--json` and stderr not a terminal, nothing is printed there.
 
 A refreshed snapshot with remaining quota above zero for a pool clears that account's cooldowns for the families in that pool. Tokens are never printed. **Network access happens only in `accounts quota --refresh`**, never during dispatch.
 
@@ -336,7 +336,6 @@ An account whose credential is on loan to a running job is skipped (`- <name>: s
 |---|---|
 | `AGY_CREW_ACCOUNT` | Default for `--account` (`auto`, `live` or an account name) |
 | `AGY_CREW_HOME` | Moves the global directory `~/.agy-crew/`, including the pool and its accounts |
-| `AGY_CREW_CLOUDCODE_URL` | Replaces the default `https://cloudcode-pa.googleapis.com` base URL for `accounts quota --refresh` (tests, proxies) |
 | `AGY_CREW_NO_UPDATE_CHECK` | `1` disables the daily npm update check on interactive `start` / full-screen `inspect` |
 
 ### State layout
